@@ -173,6 +173,7 @@ function DocumentsPage() {
       }
       setEditorOpen(false);
     } catch {
+      return;
     }
   }
 
@@ -182,6 +183,7 @@ function DocumentsPage() {
       await deleteDocument.mutateAsync(selected.id);
       setDeleteOpen(false);
     } catch {
+      return;
     }
   }
 
@@ -190,6 +192,7 @@ function DocumentsPage() {
     try {
       await generateDocument.mutateAsync(documentId);
     } catch {
+      return;
     } finally {
       setGeneratingId(null);
     }
@@ -200,6 +203,7 @@ function DocumentsPage() {
     try {
       await retryDocument.mutateAsync(documentId);
     } catch {
+      return;
     } finally {
       setRetryingId(null);
     }
@@ -210,6 +214,7 @@ function DocumentsPage() {
     try {
       await downloadDocument.mutateAsync(documentId);
     } catch {
+      return;
     } finally {
       setDownloadingId(null);
     }

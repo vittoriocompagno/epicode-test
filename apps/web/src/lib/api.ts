@@ -94,6 +94,7 @@ async function parseError(response: Response): Promise<ApiClientError> {
       );
     }
   } catch {
+    return new ApiClientError(response.status, 'UNKNOWN', response.statusText || 'Request failed');
   }
   return new ApiClientError(response.status, 'UNKNOWN', response.statusText || 'Request failed');
 }

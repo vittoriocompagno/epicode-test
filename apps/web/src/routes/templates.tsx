@@ -138,6 +138,7 @@ function TemplatesPage() {
       }
       setEditorOpen(false);
     } catch {
+      return;
     }
   }
 
@@ -161,6 +162,7 @@ function TemplatesPage() {
       setPreviewHtml(result.html);
       setPreviewOpen(true);
     } catch {
+      return;
     }
   }
 
@@ -171,6 +173,7 @@ function TemplatesPage() {
       setDeleteOpen(false);
       setSelected(null);
     } catch {
+      return;
     }
   }
 

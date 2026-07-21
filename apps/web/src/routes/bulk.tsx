@@ -79,6 +79,7 @@ function BulkPage() {
       setActiveBatchId(accepted.batchId);
       void batches.refetch();
     } catch {
+      return;
     }
   }
 
