@@ -27,11 +27,7 @@ export function subscribeApiKey(listener: () => void): () => void {
 }
 
 export function getApiKey(): string | null {
-  try {
-    return sessionStorage.getItem(STORAGE_KEY);
-  } catch {
-    return null;
-  }
+  return sessionStorage.getItem(STORAGE_KEY);
 }
 
 export function getAuthState(): AuthState {

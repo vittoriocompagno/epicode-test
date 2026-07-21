@@ -66,7 +66,7 @@ function BulkPage() {
     event.target.value = '';
   }
 
-  async function handleCreateBatch() {
+  function handleCreateBatch() {
     setFormError(null);
     const result = parseBatchInput(templateId, itemsJson, batchEmail);
     if (!result.ok) {
@@ -74,13 +74,12 @@ function BulkPage() {
       return;
     }
 
-    try {
-      const accepted = await createBatch.mutateAsync(result.data);
-      setActiveBatchId(accepted.batchId);
-      void batches.refetch();
-    } catch {
-      return;
-    }
+    createBatch.mutate(result.data, {
+      onSuccess: (accepted) => {
+        setActiveBatchId(accepted.batchId);
+        void batches.refetch();
+      },
+    });
   }
 
   return (

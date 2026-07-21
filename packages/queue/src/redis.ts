@@ -1,8 +1,5 @@
 import { Redis } from 'ioredis';
 
-/**
- * BullMQ requires maxRetriesPerRequest: null on shared connections used by workers.
- */
 export function createRedisConnection(url: string, forWorker = false): Redis {
   return new Redis(url, {
     maxRetriesPerRequest: forWorker ? null : 20,

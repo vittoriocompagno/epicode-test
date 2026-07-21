@@ -158,66 +158,50 @@ function DocumentsPage() {
       return;
     }
 
-    try {
-      if (selected) {
-        await updateDocument.mutateAsync({
-          id: selected.id,
-          body: { templateId: form.templateId, variables: parsed.data },
-        });
-      } else {
-        await createDocument.mutateAsync({
+    const onSuccess = () => setEditorOpen(false);
+    if (selected) {
+      updateDocument.mutate(
+        { id: selected.id, body: { templateId: form.templateId, variables: parsed.data } },
+        { onSuccess },
+      );
+    } else {
+      createDocument.mutate(
+        {
           templateId: form.templateId,
           variables: parsed.data,
           ...(form.emailTo.trim() ? { emailTo: form.emailTo.trim() } : {}),
-        });
-      }
-      setEditorOpen(false);
-    } catch {
-      return;
+        },
+        { onSuccess },
+      );
     }
   }
 
-  async function handleDelete() {
+  function handleDelete() {
     if (!selected) return;
-    try {
-      await deleteDocument.mutateAsync(selected.id);
-      setDeleteOpen(false);
-    } catch {
-      return;
-    }
+    deleteDocument.mutate(selected.id, {
+      onSuccess: () => setDeleteOpen(false),
+    });
   }
 
-  async function handleGenerate(documentId: string) {
+  function handleGenerate(documentId: string) {
     setGeneratingId(documentId);
-    try {
-      await generateDocument.mutateAsync(documentId);
-    } catch {
-      return;
-    } finally {
-      setGeneratingId(null);
-    }
+    generateDocument.mutate(documentId, {
+      onSettled: () => setGeneratingId(null),
+    });
   }
 
-  async function handleRetry(documentId: string) {
+  function handleRetry(documentId: string) {
     setRetryingId(documentId);
-    try {
-      await retryDocument.mutateAsync(documentId);
-    } catch {
-      return;
-    } finally {
-      setRetryingId(null);
-    }
+    retryDocument.mutate(documentId, {
+      onSettled: () => setRetryingId(null),
+    });
   }
 
-  async function handleDownload(documentId: string) {
+  function handleDownload(documentId: string) {
     setDownloadingId(documentId);
-    try {
-      await downloadDocument.mutateAsync(documentId);
-    } catch {
-      return;
-    } finally {
-      setDownloadingId(null);
-    }
+    downloadDocument.mutate(documentId, {
+      onSettled: () => setDownloadingId(null),
+    });
   }
 
   return (

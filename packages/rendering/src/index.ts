@@ -30,14 +30,6 @@ type AstNode = {
   [key: string]: unknown;
 };
 
-/**
- * Variable value policy:
- * - `undefined` at a required path => missing (error)
- * - `null` => allowed, rendered as empty string
- * - `string` / `number` / `boolean` => rendered via Handlebars escaping
- * - nested objects are allowed for intermediate path segments (e.g. course.title)
- * - arrays/objects used as a leaf value are JSON-stringified then escaped
- */
 export function extractTemplateVariables(templateHtml: string): string[] {
   const validation = validateTemplate(templateHtml);
   if (!validation.ok) {

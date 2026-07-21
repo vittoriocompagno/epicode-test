@@ -6,10 +6,6 @@ export type LocalFilesystemStorageOptions = {
   rootDir: string;
 };
 
-/**
- * Local filesystem DocumentStorage adapter.
- * Production deployments should swap this for S3-compatible object storage.
- */
 export class LocalFilesystemStorage implements DocumentStorage {
   private readonly rootDir: string;
 

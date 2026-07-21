@@ -96,7 +96,7 @@ export async function generateCertificateDocument(
 
     const completed = await markDocumentCompleted(deps.db, documentId, storageKey);
     if (!completed) {
-      await deps.storage.delete(storageKey).catch(() => undefined);
+      await deps.storage.delete(storageKey);
       throw new Error(`Document ${documentId} was not in processing state when completing`);
     }
 

@@ -302,7 +302,6 @@ export const OverviewResponseSchema = z.object({
 
 export type OverviewResponse = z.infer<typeof OverviewResponseSchema>;
 
-/** Lightweight BullMQ payloads — never embed templates or PDF buffers. */
 export const GenerateCertificateJobSchema = z.object({
   documentId: UuidSchema,
 });

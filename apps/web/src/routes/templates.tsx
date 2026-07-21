@@ -117,7 +117,7 @@ function TemplatesPage() {
     }));
   }
 
-  async function handleSave() {
+  function handleSave() {
     setFormError(null);
     if (!form.name.trim() || !form.html.trim()) {
       setFormError('Name and HTML are required.');
@@ -130,19 +130,15 @@ function TemplatesPage() {
       html: form.html,
     };
 
-    try {
-      if (selected) {
-        await updateTemplate.mutateAsync({ id: selected.id, body: payload });
-      } else {
-        await createTemplate.mutateAsync(payload);
-      }
-      setEditorOpen(false);
-    } catch {
-      return;
+    const onSuccess = () => setEditorOpen(false);
+    if (selected) {
+      updateTemplate.mutate({ id: selected.id, body: payload }, { onSuccess });
+    } else {
+      createTemplate.mutate(payload, { onSuccess });
     }
   }
 
-  async function handlePreview() {
+  function handlePreview() {
     setFormError(null);
     const parsed = parseVariables(form.variablesJson);
     if (!parsed.ok) {
@@ -154,27 +150,25 @@ function TemplatesPage() {
       return;
     }
 
-    try {
-      const result = await previewAdHoc.mutateAsync({
-        html: form.html,
-        variables: parsed.data,
-      });
-      setPreviewHtml(result.html);
-      setPreviewOpen(true);
-    } catch {
-      return;
-    }
+    previewAdHoc.mutate(
+      { html: form.html, variables: parsed.data },
+      {
+        onSuccess: (result) => {
+          setPreviewHtml(result.html);
+          setPreviewOpen(true);
+        },
+      },
+    );
   }
 
-  async function handleDelete() {
+  function handleDelete() {
     if (!selected) return;
-    try {
-      await deleteTemplate.mutateAsync(selected.id);
-      setDeleteOpen(false);
-      setSelected(null);
-    } catch {
-      return;
-    }
+    deleteTemplate.mutate(selected.id, {
+      onSuccess: () => {
+        setDeleteOpen(false);
+        setSelected(null);
+      },
+    });
   }
 
   useEffect(() => {
