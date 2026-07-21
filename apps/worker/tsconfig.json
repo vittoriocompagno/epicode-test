@@ -10,6 +10,7 @@
     { "path": "../../packages/contracts" },
     { "path": "../../packages/database" },
     { "path": "../../packages/queue" },
-    { "path": "../../packages/rendering" }
+    { "path": "../../packages/rendering" },
+    { "path": "../../packages/storage" }
   ]
 }

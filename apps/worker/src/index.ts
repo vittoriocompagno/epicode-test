@@ -1,62 +1,119 @@
 import { Worker } from 'bullmq';
+import nodemailer from 'nodemailer';
 import pino from 'pino';
-import { chromium, type Browser } from 'playwright';
 import {
   closeDatabaseClient,
   createDatabaseClient,
-  type DatabaseClient,
 } from '@certificates/database';
 import {
   QUEUE_NAMES,
   createRedisConnection,
+  defaultJobOptions,
+  type BatchDispatchJobName,
   type CertificateJobName,
-  type CertificateJobPayloadMap,
 } from '@certificates/queue';
-import { closeRenderingResources } from '@certificates/rendering';
+import type { DispatchBatchJob, GenerateCertificateJob } from '@certificates/contracts';
+import { PlaywrightPdfRenderer } from '@certificates/rendering';
+import { LocalFilesystemStorage } from '@certificates/storage';
+import { createWorkerCertificateQueue, dispatchBatch } from './dispatch.js';
+import { generateCertificateDocument } from './generate.js';
 import { loadEnv } from './env.js';
-import { processCertificateJob } from './processor.js';
 
 const env = loadEnv();
 const logger = pino({
   level: env.NODE_ENV === 'production' ? 'info' : 'debug',
 });
 
-let browser: Browser | null = null;
-let database: DatabaseClient | null = null;
-const redis = createRedisConnection(env.REDIS_URL, true);
-let shuttingDown = false;
-
 async function bootstrap(): Promise<void> {
-  database = createDatabaseClient(env.DATABASE_URL);
-  browser = await chromium.launch({ headless: true });
+  const database = createDatabaseClient(env.DATABASE_URL);
+  const storage = new LocalFilesystemStorage({ rootDir: env.LOCAL_STORAGE_PATH });
+  const pdfRenderer = new PlaywrightPdfRenderer();
+  const redis = createRedisConnection(env.REDIS_URL, true);
+  const certificateQueue = createWorkerCertificateQueue(env.REDIS_URL);
+  const maxAttempts = defaultJobOptions.attempts;
 
-  const worker = new Worker<
-    CertificateJobPayloadMap[CertificateJobName],
-    void,
-    CertificateJobName
-  >(
+  const mailer = env.MAIL_ENABLED
+    ? nodemailer.createTransport({
+        host: env.MAIL_HOST,
+        port: env.MAIL_PORT,
+        secure: false,
+      })
+    : null;
+
+  const generationDeps = {
+    db: database.db,
+    storage,
+    pdfRenderer,
+    mailer,
+    mailFrom: env.MAIL_FROM,
+    logger,
+  };
+
+  const certificateWorker = new Worker<GenerateCertificateJob, void, CertificateJobName>(
     QUEUE_NAMES.certificateJobs,
-    async (job) => processCertificateJob(job, logger),
+    async (job) => {
+      logger.info(
+        { jobId: job.id, documentId: job.data.documentId, attempt: job.attemptsMade + 1 },
+        'job received',
+      );
+      await generateCertificateDocument(
+        job.data.documentId,
+        generationDeps,
+        job.attemptsMade + 1,
+        maxAttempts,
+      );
+    },
     {
       connection: redis,
       concurrency: env.WORKER_CONCURRENCY,
     },
   );
 
-  worker.on('ready', () => {
+  const dispatchWorker = new Worker<DispatchBatchJob, void, BatchDispatchJobName>(
+    QUEUE_NAMES.batchDispatch,
+    async (job) => {
+      logger.info({ jobId: job.id, batchId: job.data.batchId }, 'dispatch job received');
+      await dispatchBatch(job.data.batchId, {
+        db: database.db,
+        certificateQueue,
+        chunkSize: env.BATCH_DISPATCH_CHUNK_SIZE,
+        logger,
+      });
+    },
+    {
+      connection: redis,
+      concurrency: 1,
+    },
+  );
+
+  certificateWorker.on('ready', () => {
     logger.info(
-      {
-        queue: QUEUE_NAMES.certificateJobs,
-        concurrency: env.WORKER_CONCURRENCY,
-      },
-      'Worker ready',
+      { queue: QUEUE_NAMES.certificateJobs, concurrency: env.WORKER_CONCURRENCY },
+      'Certificate worker ready',
     );
   });
 
-  worker.on('failed', (job, error) => {
-    logger.error({ err: error, jobId: job?.id }, 'Job failed');
+  dispatchWorker.on('ready', () => {
+    logger.info({ queue: QUEUE_NAMES.batchDispatch }, 'Batch dispatch worker ready');
   });
 
+  certificateWorker.on('failed', (job, error) => {
+    logger.error(
+      {
+        err: error,
+        jobId: job?.id,
+        documentId: job?.data.documentId,
+        attempt: job?.attemptsMade,
+      },
+      'Certificate job failed',
+    );
+  });
+
+  dispatchWorker.on('failed', (job, error) => {
+    logger.error({ err: error, jobId: job?.id, batchId: job?.data.batchId }, 'Dispatch job failed');
+  });
+
+  let shuttingDown = false;
   const shutdown = async (signal: string) => {
     if (shuttingDown) {
       return;
@@ -65,14 +122,13 @@ async function bootstrap(): Promise<void> {
     logger.info({ signal }, 'Shutting down worker');
 
     try {
-      await worker.close();
+      await Promise.all([certificateWorker.close(), dispatchWorker.close()]);
+      await certificateQueue.close();
       await redis.quit();
-      if (database) {
-        await closeDatabaseClient(database);
-      }
-      await closeRenderingResources();
-      if (browser) {
-        await browser.close();
+      await closeDatabaseClient(database);
+      await pdfRenderer.close();
+      if (mailer) {
+        mailer.close();
       }
       logger.info('Worker shutdown complete');
       process.exit(0);
