@@ -1,0 +1,30 @@
+{
+  "name": "@certificates/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file=../../.env src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node --env-file=../../.env dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@certificates/contracts": "workspace:*",
+    "@certificates/database": "workspace:*",
+    "@certificates/queue": "workspace:*",
+    "@fastify/cors": "^11.1.0",
+    "fastify": "^5.6.2",
+    "fastify-plugin": "^5.1.0",
+    "pino": "^9.14.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.3",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
