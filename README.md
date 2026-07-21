@@ -176,7 +176,7 @@ pnpm build
 | Metric | Value |
 | --- | --- |
 | `LOAD_TEST_JOBS` | 10000 |
-| Bulk endpoint | `202` in ~817 ms |
+| Bulk endpoint | `202` in ~903 ms |
 | Concurrent `/health` | ~1 ms |
 | Batch items persisted | 10000 |
 | Jobs dispatched | 10000 |
