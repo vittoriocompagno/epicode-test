@@ -121,6 +121,7 @@ export const CreateDocumentSchema = z
   .object({
     templateId: UuidSchema,
     variables: DocumentVariablesSchema.default({}),
+    emailTo: z.string().email().optional(),
   })
   .strict();
 
@@ -146,6 +147,11 @@ export const DocumentResponseSchema = z.object({
   outputPath: z.string().nullable(),
   errorCode: z.string().nullable(),
   errorMessage: z.string().nullable(),
+  attemptCount: z.number().int().nonnegative(),
+  emailTo: z.string().email().nullable(),
+  emailStatus: z.enum(['pending', 'sent', 'failed', 'skipped']).nullable(),
+  emailError: z.string().nullable(),
+  emailedAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   generatedAt: z.string().datetime().nullable(),
@@ -185,27 +191,87 @@ export const PreviewResponseSchema = z.object({
 
 export type PreviewResponse = z.infer<typeof PreviewResponseSchema>;
 
-/** Placeholder job payload for future certificate generation. */
-export const GenerateCertificateJobSchema = z.object({
-  jobType: z.literal('generate-certificate'),
+export const GenerateAcceptedSchema = z.object({
   documentId: UuidSchema,
-  templateId: UuidSchema,
-  requestedAt: z.string().datetime(),
+  status: z.enum(['queued', 'processing', 'completed']),
+  jobId: z.string(),
+});
+
+export type GenerateAccepted = z.infer<typeof GenerateAcceptedSchema>;
+
+export const DocumentStatusResponseSchema = z.object({
+  documentId: UuidSchema,
+  status: DocumentStatusSchema,
+  attempts: z.number().int().nonnegative(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  generatedAt: z.string().datetime().nullable(),
+  error: z
+    .object({
+      code: z.string(),
+      message: z.string(),
+    })
+    .nullable(),
+  emailStatus: z.enum(['pending', 'sent', 'failed', 'skipped']).nullable(),
+});
+
+export type DocumentStatusResponse = z.infer<typeof DocumentStatusResponseSchema>;
+
+export const MAX_BATCH_ITEMS = 10_000;
+
+export const CreateBatchItemSchema = z
+  .object({
+    variables: DocumentVariablesSchema,
+    emailTo: z.string().email().optional(),
+  })
+  .strict();
+
+export const CreateBatchSchema = z
+  .object({
+    templateId: UuidSchema,
+    items: z.array(CreateBatchItemSchema).min(1).max(MAX_BATCH_ITEMS),
+    emailTo: z.string().email().optional(),
+  })
+  .strict();
+
+export type CreateBatchInput = z.infer<typeof CreateBatchSchema>;
+
+export const BatchAcceptedSchema = z.object({
+  batchId: UuidSchema,
+  status: z.enum(['queued', 'processing', 'completed', 'failed']),
+  total: z.number().int().nonnegative(),
+});
+
+export type BatchAccepted = z.infer<typeof BatchAcceptedSchema>;
+
+export const BatchStatusResponseSchema = z.object({
+  id: UuidSchema,
+  status: z.enum(['queued', 'processing', 'completed', 'failed']),
+  total: z.number().int().nonnegative(),
+  queued: z.number().int().nonnegative(),
+  processing: z.number().int().nonnegative(),
+  completed: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  pending: z.number().int().nonnegative(),
+  createdAt: z.string().datetime(),
+  completedAt: z.string().datetime().nullable(),
+});
+
+export type BatchStatusResponse = z.infer<typeof BatchStatusResponseSchema>;
+
+/** Lightweight BullMQ payloads — never embed templates or PDF buffers. */
+export const GenerateCertificateJobSchema = z.object({
+  documentId: UuidSchema,
 });
 
 export type GenerateCertificateJob = z.infer<typeof GenerateCertificateJobSchema>;
 
-export const BulkGenerateJobSchema = z.object({
-  jobType: z.literal('bulk-generate'),
+export const DispatchBatchJobSchema = z.object({
   batchId: UuidSchema,
-  requestedAt: z.string().datetime(),
 });
 
-export type BulkGenerateJob = z.infer<typeof BulkGenerateJobSchema>;
+export type DispatchBatchJob = z.infer<typeof DispatchBatchJobSchema>;
 
-export const JobPayloadSchema = z.discriminatedUnion('jobType', [
-  GenerateCertificateJobSchema,
-  BulkGenerateJobSchema,
-]);
+export const JobPayloadSchema = z.union([GenerateCertificateJobSchema, DispatchBatchJobSchema]);
 
 export type JobPayload = z.infer<typeof JobPayloadSchema>;

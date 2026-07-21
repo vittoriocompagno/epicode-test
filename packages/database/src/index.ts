@@ -5,5 +5,10 @@ export {
   schemaBootstrap,
   templates,
   documents,
+  generationBatches,
+  batchItems,
   documentStatusEnum,
+  emailStatusEnum,
+  batchStatusEnum,
+  batchItemStatusEnum,
 } from './schema.js';

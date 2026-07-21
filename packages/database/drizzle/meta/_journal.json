@@ -15,6 +15,13 @@
       "when": 1784624882984,
       "tag": "0001_overrated_lucky_pierre",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784626688823,
+      "tag": "0002_glossy_absorbing_man",
+      "breakpoints": true
     }
   ]
 }
