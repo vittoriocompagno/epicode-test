@@ -12,7 +12,7 @@
     "dev": "pnpm -r --parallel --filter @certificates/contracts --filter @certificates/database --filter @certificates/queue --filter @certificates/storage --filter @certificates/rendering --filter @certificates/web --filter @certificates/api --filter @certificates/worker run dev",
     "build": "pnpm -r --filter @certificates/contracts --filter @certificates/database --filter @certificates/queue --filter @certificates/storage --filter @certificates/rendering --filter @certificates/api --filter @certificates/worker --filter @certificates/web run build",
     "pretest": "pnpm packages:build",
-    "test": "pnpm -r --filter @certificates/contracts --filter @certificates/api --filter @certificates/worker --filter @certificates/queue run test",
+    "test": "pnpm -r --filter @certificates/contracts --filter @certificates/rendering --filter @certificates/api --filter @certificates/worker --filter @certificates/queue run test",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "pretypecheck": "pnpm packages:build",

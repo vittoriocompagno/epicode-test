@@ -1,0 +1,99 @@
+import type {
+  CreateDocumentInput,
+  DocumentListQuery,
+  DocumentResponse,
+  UpdateDocumentInput,
+} from '@certificates/contracts';
+import { documents, type Database } from '@certificates/database';
+import { and, count, desc, eq } from 'drizzle-orm';
+import { AppError } from '../errors.js';
+
+function toDocumentResponse(row: typeof documents.$inferSelect): DocumentResponse {
+  return {
+    id: row.id,
+    templateId: row.templateId,
+    variables: row.variables,
+    status: row.status,
+    outputPath: row.outputPath,
+    errorCode: row.errorCode,
+    errorMessage: row.errorMessage,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    generatedAt: row.generatedAt ? row.generatedAt.toISOString() : null,
+  };
+}
+
+export class DocumentRepository {
+  constructor(private readonly db: Database) {}
+
+  async create(input: CreateDocumentInput): Promise<DocumentResponse> {
+    const [row] = await this.db
+      .insert(documents)
+      .values({
+        templateId: input.templateId,
+        variables: input.variables,
+        status: 'draft',
+      })
+      .returning();
+
+    if (!row) {
+      throw new AppError(500, 'INTERNAL_ERROR', 'Failed to create document');
+    }
+
+    return toDocumentResponse(row);
+  }
+
+  async findById(id: string): Promise<DocumentResponse | null> {
+    const [row] = await this.db.select().from(documents).where(eq(documents.id, id)).limit(1);
+    return row ? toDocumentResponse(row) : null;
+  }
+
+  async list(query: DocumentListQuery): Promise<{ items: DocumentResponse[]; total: number }> {
+    const filters = [];
+    if (query.templateId) {
+      filters.push(eq(documents.templateId, query.templateId));
+    }
+    if (query.status) {
+      filters.push(eq(documents.status, query.status));
+    }
+    const where = filters.length > 0 ? and(...filters) : undefined;
+    const offset = (query.page - 1) * query.pageSize;
+
+    const [totalRow] = await this.db.select({ value: count() }).from(documents).where(where);
+
+    const rows = await this.db
+      .select()
+      .from(documents)
+      .where(where)
+      .orderBy(desc(documents.createdAt), desc(documents.id))
+      .limit(query.pageSize)
+      .offset(offset);
+
+    return {
+      items: rows.map(toDocumentResponse),
+      total: Number(totalRow?.value ?? 0),
+    };
+  }
+
+  async update(id: string, input: UpdateDocumentInput): Promise<DocumentResponse | null> {
+    const [row] = await this.db
+      .update(documents)
+      .set({
+        ...(input.templateId !== undefined ? { templateId: input.templateId } : {}),
+        ...(input.variables !== undefined ? { variables: input.variables } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(documents.id, id))
+      .returning();
+
+    return row ? toDocumentResponse(row) : null;
+  }
+
+  async delete(id: string): Promise<boolean> {
+    const deleted = await this.db
+      .delete(documents)
+      .where(eq(documents.id, id))
+      .returning({ id: documents.id });
+    return deleted.length > 0;
+  }
+}

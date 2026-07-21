@@ -8,6 +8,10 @@ const EnvSchema = z.object({
   REDIS_URL: z.string().min(1),
   API_KEY: z.string().min(1),
   BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(1_048_576),
+  TEMPLATE_BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(131_072),
+  PREVIEW_BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(65_536),
+  PREVIEW_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
+  PREVIEW_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
