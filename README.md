@@ -1,200 +1,219 @@
-# Certificate Generation API
+# Certificate Generation
 
-TypeScript monorepo for certificate templates, draft documents, asynchronous PDF generation, and bulk dispatch.
+TypeScript monorepo: Fastify API, BullMQ worker, React control plane, shared packages.
 
-```text
-Client
-  ↓
-Fastify API  ──PostgreSQL──┐
-  ↓                        │
-BullMQ / Redis             │
-  ↓                        │
-Worker replicas ───────────┘
-  ↓
-Handlebars → Playwright PDF → Local storage (+ optional Mailpit)
-```
+## Quick start
 
-API and worker are independently runnable. PDF generation never runs inside the API process.
-
-## Stack
-
-| Area | Technology |
-| --- | --- |
-| API | Fastify, Zod, Drizzle, BullMQ producer |
-| Worker | BullMQ consumers, Playwright Chromium, Nodemailer |
-| Packages | `contracts`, `database`, `queue`, `rendering`, `storage` |
-| Infra | PostgreSQL, Redis, Mailpit |
-
-## Setup
+Requires **Node ≥ 22** and **pnpm 11** (`packageManager` field in `package.json`).
 
 ```bash
 cp .env.example .env
-docker compose up -d
 pnpm install
+docker compose up -d
 pnpm db:migrate
-pnpm --filter @certificates/api dev
-pnpm --filter @certificates/worker dev
+pnpm dev
 ```
+
+| Service | URL |
+| --- | --- |
+| Web console | http://localhost:5173 |
+| API | http://localhost:3000 |
+| Mailpit UI | http://localhost:8025 |
+| Postgres | `localhost:5432` |
+| Redis | `localhost:6379` |
+
+Development API key (from `.env.example`):
+
+```text
+development-api-key
+```
+
+Enter that key in the web console (stored in `sessionStorage` only). This is a local challenge interface, not production authentication.
+
+Optional demo against a running API + worker:
+
+```bash
+pnpm demo:seed
+pnpm demo:generate
+```
+
+## Architecture
+
+Independently runnable deployment units in one monorepo — not a microservice platform.
+
+```text
+React control plane
+        |
+        | X-API-Key
+        v
+Fastify API
+        |
+        +------ PostgreSQL
+        |
+        +------ BullMQ / Redis
+                    |
+                    +------ Batch dispatcher
+                    |
+                    +------ Certificate worker replicas
+                                  |
+                                  +------ Handlebars renderer
+                                  +------ Playwright PDF renderer
+                                  +------ Document storage
+                                  +------ Mailpit
+```
+
+PDF generation never runs inside the API process.
+
+## Repository structure
+
+```text
+apps/api       Fastify HTTP API
+apps/worker    BullMQ consumers (certificate + batch dispatch)
+apps/web       React evaluator console
+packages/contracts   Zod schemas + shared types
+packages/database    Drizzle schema + migrations
+packages/queue       BullMQ helpers
+packages/rendering   Handlebars + PdfRenderer
+packages/storage     DocumentStorage (local FS)
+docs/          OpenAPI + review notes
+scripts/       load test + demo flows
+```
+
+## Root commands
+
+| Command | Purpose |
+| --- | --- |
+| `pnpm dev` | Build packages, then run web + API + worker |
+| `pnpm build` | Build all packages and apps |
+| `pnpm lint` | ESLint |
+| `pnpm typecheck` | TypeScript across the workspace |
+| `pnpm test` | Unit/integration suite |
+| `pnpm test:load` | 10,000-item batch enqueue responsiveness |
+| `pnpm db:generate` | Generate Drizzle migration |
+| `pnpm db:migrate` | Apply migrations |
+| `pnpm demo:seed` | Idempotent demo template + draft (+ small batch) |
+| `pnpm demo:generate` | Public-API smoke: generate → poll → download `%PDF` |
+
+## Frontend usage
+
+1. Open http://localhost:5173
+2. Paste `development-api-key`
+3. **Templates** — create/edit HTML, preview in a sandboxed iframe (via API)
+4. **Documents** — draft → generate → poll → download
+5. **Bulk** — small JSON batches and progress (use `pnpm test:load` for 10k)
+
+## API documentation
+
+OpenAPI specification (no unauthenticated Swagger UI):
+
+[`docs/openapi.yaml`](docs/openapi.yaml)
+
+Technical review notes: [`docs/technical-review.md`](docs/technical-review.md)  
+Rubric self-assessment: [`docs/rubric-assessment.md`](docs/rubric-assessment.md)
 
 All HTTP routes require:
 
 ```http
-X-API-Key: <API_KEY>
+X-API-Key: development-api-key
 ```
 
-## Architecture decisions
+## PDF generation flow
 
-### Async generation
-
-1. `POST /api/documents/:id/generate` validates state, sets `queued`, enqueues `{ documentId }`, returns `202`.
-2. The worker claims the row with an atomic `queued → processing` update.
-3. It renders HTML with the shared Handlebars engine, creates a PDF through `PdfRenderer`, stores a logical key via `DocumentStorage`, then marks `completed`.
-4. Email is optional and runs after PDF persistence. SMTP failure does not roll back the PDF.
-
-### Idempotency
-
-- BullMQ job id: `generate-<documentId>`
-- Completed documents short-circuit as no-ops
-- Processing ownership uses a conditional SQL update (not check-then-update)
-- Storage key: `documents/<documentId>.pdf`
-- Retries reuse the same document row
-
-BullMQ may deliver jobs more than once; the worker is therefore written to tolerate duplicates.
+1. `POST /api/documents/:id/generate` validates, sets `queued`, enqueues `{ documentId }`, returns **202**
+2. Worker claims with atomic `queued → processing`
+3. Handlebars → `PdfRenderer` → storage key → `completed`
+4. Optional email after PDF success (SMTP failure does not roll back the PDF)
 
 ### State machine
 
 | From | To | Trigger |
 | --- | --- | --- |
-| `draft` | `queued` | generate |
-| `failed` | `queued` | retry / generate |
-| `queued` | `processing` | worker claim |
-| `processing` | `completed` | PDF stored |
-| `processing` | `failed` | final worker failure |
-| `queued` / `processing` / `completed` | same | generate returns current state (no duplicate work) |
-| `processing` | `queued` | transient worker failure (BullMQ will retry) |
-| `processing` | `failed` | final worker failure after max attempts |
+| draft | queued | generate |
+| failed | queued | retry / generate |
+| queued | processing | worker claim |
+| processing | queued | transient failure (retry) |
+| processing | completed | PDF stored |
+| processing | failed | final attempt |
+| queued / processing / completed | same | generate is idempotent |
 
-### Bulk generation
+### Idempotency
 
-`POST /api/batches` validates every item, bulk-inserts documents + batch items, and enqueues one `dispatch-batch` job.
+- Job id `generate-<documentId>`
+- Completed no-op
+- Conditional SQL claim
+- Deterministic storage key `documents/<documentId>.pdf`
 
-The dispatcher loads pending items in chunks (default 500), uses `addBulk`, and marks items `queued`. Progress on `GET /api/batches/:id` is computed from `batch_items` status counts.
+## Bulk generation
 
-### PDF renderer
+`POST /api/batches` inserts documents/items in bulk, enqueues one `dispatch-batch` job, returns 202. Dispatcher chunks (default 500) with `addBulk`. Progress on `GET /api/batches/:id` is computed from `batch_items` statuses.
 
-`PdfRenderer` is the dependency boundary. Production code uses `PlaywrightPdfRenderer`:
+## Security decisions
 
-- shared Chromium browser
-- new isolated context/page per job
-- JavaScript disabled
-- non-`data:` / non-`about:blank` requests aborted
-- timeout + max HTML size
-- closed on worker shutdown
+- API key on **every** route including `/health`
+- Timing-safe key comparison
+- Escaped Handlebars output; unsafe constructs rejected
+- Playwright: JS disabled where possible, external/`file://` blocked, HTML size + timeout
+- Rate limits on preview / generate / retry / batch
+- No absolute filesystem paths in API responses
 
-Tests inject `FakePdfRenderer`.
+## Abstractions
 
-### Storage
+- **PdfRenderer** — Playwright impl + fake for tests
+- **DocumentStorage** — local FS now; swap to S3 in production
 
-`LocalFilesystemStorage` stores objects under `LOCAL_STORAGE_PATH` using logical keys. Absolute filesystem paths are never returned by the API. Production should replace this with S3-compatible storage.
-
-### Email policy
-
-- Sent only when `emailTo` is set and `MAIL_ENABLED=true`
-- Runs after successful PDF storage
-- Failures set `email_status=failed` without regenerating the PDF
-
-## HTTP API
-
-| Method | Path | Notes |
-| --- | --- | --- |
-| `GET` | `/health` | Auth required |
-| `GET/POST/PATCH/DELETE` | `/api/templates...` | CRUD + preview |
-| `GET/POST/PATCH/DELETE` | `/api/documents...` | Draft CRUD |
-| `POST` | `/api/documents/:id/generate` | `202` enqueue |
-| `POST` | `/api/documents/:id/retry` | failed only |
-| `GET` | `/api/documents/:id/status` | poll payload |
-| `GET` | `/api/documents/:id/download` | `application/pdf` |
-| `POST` | `/api/batches` | up to 10,000 items |
-| `GET` | `/api/batches/:id` | progress |
-
-### cURL examples
-
-```bash
-export API_KEY=development-api-key
-
-# generate
-curl -s -X POST "http://localhost:3000/api/documents/$DOCUMENT_ID/generate" \
-  -H "X-API-Key: $API_KEY"
-
-# status
-curl -s "http://localhost:3000/api/documents/$DOCUMENT_ID/status" \
-  -H "X-API-Key: $API_KEY"
-
-# retry
-curl -s -X POST "http://localhost:3000/api/documents/$DOCUMENT_ID/retry" \
-  -H "X-API-Key: $API_KEY"
-
-# download
-curl -s -OJ "http://localhost:3000/api/documents/$DOCUMENT_ID/download" \
-  -H "X-API-Key: $API_KEY"
-
-# batch (truncated example)
-curl -s -X POST http://localhost:3000/api/batches \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"templateId":"'"$TEMPLATE_ID"'","items":[{"variables":{"name":"Ada"}}]}'
-
-# batch progress
-curl -s "http://localhost:3000/api/batches/$BATCH_ID" \
-  -H "X-API-Key: $API_KEY"
-```
-
-## Queues
-
-| Queue | Job name | Payload |
-| --- | --- | --- |
-| `certificate-jobs` | `generate-certificate` | `{ documentId }` |
-| `batch-dispatch` | `dispatch-batch` | `{ batchId }` |
-
-Default attempts: 3, exponential backoff 2s.
-
-## Scripts
-
-```bash
-pnpm db:migrate
-pnpm test
-pnpm test:load          # default LOAD_TEST_JOBS=10000
-pnpm typecheck
-pnpm lint
-pnpm build
-```
-
-`pnpm test:load` pauses the certificate queue, measures bulk `202` latency, concurrent `/health` latency, persisted item counts, and dispatched job counts. It does not render 10,000 PDFs.
-
-### Measured locally (2026-07-21, MacBook Air, Docker Postgres/Redis)
-
-| Metric | Value |
-| --- | --- |
-| `LOAD_TEST_JOBS` | 10000 |
-| Bulk endpoint | `202` in ~903 ms |
-| Concurrent `/health` | ~1 ms |
-| Batch items persisted | 10000 |
-| Jobs dispatched | 10000 |
-| Duplicates / lost | 0 / 0 |
-
-## Horizontal scaling
-
-Start multiple worker processes with the same Redis/Postgres configuration:
+## Horizontal scaling & shutdown
 
 ```bash
 WORKER_CONCURRENCY=4 pnpm --filter @certificates/worker start
 ```
 
-Workers share queues; atomic `queued → processing` prevents double generation.
+Run multiple worker replicas against the same Redis/Postgres. API and worker close queues, Redis, Postgres, Playwright, and mail transport on `SIGINT`/`SIGTERM`.
+
+## Testing
+
+```bash
+pnpm test
+pnpm test:load   # default LOAD_TEST_JOBS=10000
+```
+
+### Measured load test (local MacBook Air, Docker Postgres/Redis)
+
+| Metric | Value |
+| --- | --- |
+| Jobs requested | 10000 |
+| Bulk `202` latency | ~774 ms |
+| Concurrent `/health` | ~1 ms |
+| Items / jobs | 10000 / 10000 |
+| Duplicates / lost | 0 / 0 |
+
+## Environment
+
+See `.env.example` for `API_KEY`, ports, rate limits, Mailpit, storage path, worker concurrency, and `BATCH_DISPATCH_CHUNK_SIZE`.
+
+## Migrations
+
+Drizzle SQL under `packages/database/drizzle/`. Apply with `pnpm db:migrate`.
+
+## What is implemented vs simplified
+
+| Implemented | Simplified for the challenge |
+| --- | --- |
+| Full async PDF + bulk pipeline | Single shared API key (no OAuth/users) |
+| Local FS storage adapter | Not multi-region object storage |
+| Mailpit optional email | Not a full notification product |
+| React control plane | `sessionStorage` key gate only |
+| OpenAPI file | No hosted Swagger UI |
+
+## Production evolution
+
+- Replace local storage with S3-compatible backend
+- Replace shared API key with service identities / OIDC
+- Run workers as a separate autoscaled service
+- Add metrics/tracing (OpenTelemetry) beside structured logs
+- Harden multi-tenant isolation and audit trails
 
 ## Known limitations
 
 - Local filesystem storage is single-host
-- In-memory rate limiting is used if Redis is unavailable at API boot
-- Load test isolates enqueue/dispatch throughput from Chromium rendering
-- Operator UI is not implemented in this phase
+- Load test isolates enqueue/dispatch from Chromium PDF throughput
+- Demo seed creates a new small batch each run (template/draft are reused)

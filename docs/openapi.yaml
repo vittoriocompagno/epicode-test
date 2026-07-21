@@ -1,0 +1,344 @@
+openapi: 3.0.3
+info:
+  title: Certificate Generation API
+  version: 1.0.0
+  description: |
+    Authenticated HTTP API for certificate templates, documents, async PDF generation, and bulk batches.
+    All operations require the `X-API-Key` header. There is no public Swagger UI route.
+servers:
+  - url: http://localhost:3000
+    description: Local development
+security:
+  - ApiKeyAuth: []
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+  schemas:
+    ApiError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details: { type: object, additionalProperties: true }
+    Template:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        html: { type: string }
+        variables:
+          type: array
+          items: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    Document:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        templateId: { type: string, format: uuid }
+        variables: { type: object, additionalProperties: true }
+        status:
+          type: string
+          enum: [draft, queued, processing, completed, failed]
+        outputPath: { type: string, nullable: true, description: Logical storage key, never an absolute path }
+        errorCode: { type: string, nullable: true }
+        errorMessage: { type: string, nullable: true }
+        attemptCount: { type: integer }
+        emailTo: { type: string, nullable: true }
+        emailStatus:
+          type: string
+          nullable: true
+          enum: [pending, sent, failed, skipped]
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        generatedAt: { type: string, format: date-time, nullable: true }
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: API is healthy
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /api/overview:
+    get:
+      summary: Dashboard summary
+      responses:
+        '200':
+          description: Counts and recent activity
+  /api/templates:
+    get:
+      summary: List templates
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: pageSize
+          schema: { type: integer, default: 20 }
+        - in: query
+          name: search
+          schema: { type: string }
+      responses:
+        '200':
+          description: Paginated templates
+    post:
+      summary: Create template
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, html]
+              properties:
+                name: { type: string }
+                description: { type: string, nullable: true }
+                html: { type: string }
+            example:
+              name: Demo Certificate
+              html: '<h1>{{studentName}}</h1><p>{{courseName}}</p>'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Template' }
+  /api/templates/{templateId}:
+    parameters:
+      - in: path
+        name: templateId
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      summary: Get template
+      responses:
+        '200':
+          description: Template
+    patch:
+      summary: Update template
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                description: { type: string, nullable: true }
+                html: { type: string }
+      responses:
+        '200':
+          description: Updated
+    delete:
+      summary: Delete template
+      responses:
+        '204':
+          description: Deleted
+  /api/templates/{templateId}/preview:
+    post:
+      summary: Non-persistent HTML preview
+      parameters:
+        - in: path
+          name: templateId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                variables:
+                  type: object
+                  additionalProperties: true
+            example:
+              variables:
+                studentName: Ada Lovelace
+                courseName: Analytical Engine
+      responses:
+        '200':
+          description: Rendered HTML (escaped variables)
+  /api/documents:
+    get:
+      summary: List documents
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer }
+        - in: query
+          name: pageSize
+          schema: { type: integer }
+        - in: query
+          name: templateId
+          schema: { type: string, format: uuid }
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [draft, queued, processing, completed, failed]
+      responses:
+        '200':
+          description: Paginated documents
+    post:
+      summary: Create draft document
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [templateId]
+              properties:
+                templateId: { type: string, format: uuid }
+                variables: { type: object, additionalProperties: true }
+                emailTo: { type: string, format: email }
+            example:
+              templateId: 00000000-0000-4000-8000-000000000001
+              variables:
+                studentName: Ada Lovelace
+                courseName: Analytical Engine
+              emailTo: ada@example.com
+      responses:
+        '201':
+          description: Created draft
+  /api/documents/{documentId}:
+    parameters:
+      - in: path
+        name: documentId
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      summary: Get document
+      responses:
+        '200':
+          description: Document
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Document' }
+    patch:
+      summary: Update draft document
+      responses:
+        '200':
+          description: Updated
+    delete:
+      summary: Delete document
+      responses:
+        '204':
+          description: Deleted
+  /api/documents/{documentId}/generate:
+    post:
+      summary: Enqueue PDF generation
+      parameters:
+        - in: path
+          name: documentId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              example:
+                documentId: 00000000-0000-4000-8000-000000000002
+                status: queued
+                jobId: generate-00000000-0000-4000-8000-000000000002
+  /api/documents/{documentId}/retry:
+    post:
+      summary: Retry a failed document
+      parameters:
+        - in: path
+          name: documentId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '202':
+          description: Re-queued
+        '409':
+          description: Document is not failed
+  /api/documents/{documentId}/status:
+    get:
+      summary: Generation status for polling
+      parameters:
+        - in: path
+          name: documentId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Status payload
+  /api/documents/{documentId}/download:
+    get:
+      summary: Download completed PDF
+      parameters:
+        - in: path
+          name: documentId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: application/pdf
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+  /api/batches:
+    get:
+      summary: List batches
+      responses:
+        '200':
+          description: Paginated batches
+    post:
+      summary: Create bulk generation batch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [templateId, items]
+              properties:
+                templateId: { type: string, format: uuid }
+                emailTo: { type: string, format: email }
+                items:
+                  type: array
+                  maxItems: 10000
+                  items:
+                    type: object
+                    required: [variables]
+                    properties:
+                      variables: { type: object, additionalProperties: true }
+                      emailTo: { type: string, format: email }
+            example:
+              templateId: 00000000-0000-4000-8000-000000000001
+              items:
+                - variables: { studentName: Ada, courseName: Math }
+                - variables: { studentName: Grace, courseName: Compilers }
+      responses:
+        '202':
+          description: Accepted; one dispatch job enqueued
+  /api/batches/{batchId}:
+    get:
+      summary: Batch progress
+      parameters:
+        - in: path
+          name: batchId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Progress counts
