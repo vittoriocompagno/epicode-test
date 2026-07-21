@@ -138,7 +138,6 @@ function TemplatesPage() {
       }
       setEditorOpen(false);
     } catch {
-      // Error surfaced by mutation onError
     }
   }
 
@@ -162,7 +161,6 @@ function TemplatesPage() {
       setPreviewHtml(result.html);
       setPreviewOpen(true);
     } catch {
-      // Error surfaced by mutation onError
     }
   }
 
@@ -173,7 +171,6 @@ function TemplatesPage() {
       setDeleteOpen(false);
       setSelected(null);
     } catch {
-      // Error surfaced by mutation onError
     }
   }
 

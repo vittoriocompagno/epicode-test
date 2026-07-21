@@ -37,7 +37,6 @@ function emptyCounts(): BatchProgressCounts {
   return { pending: 0, queued: 0, processing: 0, completed: 0, failed: 0 };
 }
 
-/** Progress is derived from document statuses — batch_items is only a join table. */
 export async function summarizeBatch(db: Database, batchId: string): Promise<BatchProgress | null> {
   const [batch] = await db
     .select()

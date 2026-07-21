@@ -79,7 +79,6 @@ function BulkPage() {
       setActiveBatchId(accepted.batchId);
       void batches.refetch();
     } catch {
-      // Error surfaced by mutation onError
     }
   }
 

@@ -173,7 +173,6 @@ function DocumentsPage() {
       }
       setEditorOpen(false);
     } catch {
-      // Error surfaced by mutation onError
     }
   }
 
@@ -183,7 +182,6 @@ function DocumentsPage() {
       await deleteDocument.mutateAsync(selected.id);
       setDeleteOpen(false);
     } catch {
-      // Error surfaced by mutation onError
     }
   }
 
@@ -192,7 +190,6 @@ function DocumentsPage() {
     try {
       await generateDocument.mutateAsync(documentId);
     } catch {
-      // Error surfaced by mutation onError
     } finally {
       setGeneratingId(null);
     }
@@ -203,7 +200,6 @@ function DocumentsPage() {
     try {
       await retryDocument.mutateAsync(documentId);
     } catch {
-      // Error surfaced by mutation onError
     } finally {
       setRetryingId(null);
     }
@@ -214,7 +210,6 @@ function DocumentsPage() {
     try {
       await downloadDocument.mutateAsync(documentId);
     } catch {
-      // Error surfaced by mutation onError
     } finally {
       setDownloadingId(null);
     }
