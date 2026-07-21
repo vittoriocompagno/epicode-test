@@ -1,11 +1,14 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { Redis } from 'ioredis';
+import { documents } from '@certificates/database';
+import { documentPdfStorageKey } from '@certificates/storage';
+import { eq } from 'drizzle-orm';
 import { buildApp } from './app.js';
 import type { Env } from './env.js';
 
 const API_KEY = 'test-api-key';
-const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379';
+const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379/15';
 const RATE_LIMIT_NAMESPACE = 'certificates-api-rate-limit-';
 
 const testEnv: Env = {
@@ -43,6 +46,13 @@ async function flushRateLimitKeys(): Promise<void> {
   }
 }
 
+async function clearTestQueues(app: FastifyInstance): Promise<void> {
+  await Promise.all([
+    app.certificateQueue.obliterate({ force: true }),
+    app.batchDispatchQueue.obliterate({ force: true }),
+  ]);
+}
+
 function authHeaders(extra: Record<string, string> = {}) {
   return {
     'x-api-key': API_KEY,
@@ -65,6 +75,7 @@ describe('API integration', () => {
   });
 
   afterAll(async () => {
+    await clearTestQueues(app);
     await app.close();
   });
 
@@ -377,6 +388,54 @@ describe('API integration', () => {
     expect(retryDraft.statusCode).toBe(409);
   });
 
+  it('downloads a completed PDF with attachment headers', async () => {
+    const templateResponse = await app.inject({
+      method: 'POST',
+      url: '/api/templates',
+      headers: jsonHeaders(),
+      payload: {
+        name: 'Download',
+        html: '<p>{{name}}</p>',
+      },
+    });
+    const template = templateResponse.json();
+    const documentResponse = await app.inject({
+      method: 'POST',
+      url: '/api/documents',
+      headers: jsonHeaders(),
+      payload: {
+        templateId: template.id,
+        variables: { name: 'Ada' },
+      },
+    });
+    const document = documentResponse.json();
+    const storageKey = documentPdfStorageKey(document.id);
+    const pdf = Buffer.from('%PDF-1.4\n%%EOF\n', 'utf8');
+
+    await app.storage.put({
+      key: storageKey,
+      body: pdf,
+      contentType: 'application/pdf',
+    });
+    await app.db.db
+      .update(documents)
+      .set({ status: 'completed', outputPath: storageKey, generatedAt: new Date() })
+      .where(eq(documents.id, document.id));
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/documents/${document.id}/download`,
+      headers: authHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toBe('application/pdf');
+    expect(response.headers['content-disposition']).toBe(
+      `attachment; filename="certificate-${document.id}.pdf"`,
+    );
+    expect(response.rawPayload.subarray(0, 4).toString('utf8')).toBe('%PDF');
+  });
+
   it('creates a batch and returns progress metadata', async () => {
     const templateResponse = await app.inject({
       method: 'POST',
@@ -449,6 +508,7 @@ describe('API rate limiting', () => {
   });
 
   afterAll(async () => {
+    await clearTestQueues(app);
     await app.close();
     await flushRateLimitKeys();
   });
