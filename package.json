@@ -13,6 +13,7 @@
     "build": "pnpm -r --filter @certificates/contracts --filter @certificates/database --filter @certificates/queue --filter @certificates/storage --filter @certificates/rendering --filter @certificates/api --filter @certificates/worker --filter @certificates/web run build",
     "pretest": "pnpm packages:build",
     "test": "pnpm -r --filter @certificates/contracts --filter @certificates/rendering --filter @certificates/api --filter @certificates/worker --filter @certificates/queue run test",
+    "test:load": "tsx --env-file=.env scripts/load-test-batches.ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "pretypecheck": "pnpm packages:build",
