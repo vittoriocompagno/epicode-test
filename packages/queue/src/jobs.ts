@@ -1,19 +1,16 @@
-import type { BulkGenerateJob, GenerateCertificateJob } from '@certificates/contracts';
+import type { DispatchBatchJob, GenerateCertificateJob } from '@certificates/contracts';
 import { QUEUE_NAMES } from './names.js';
 
-export type CertificateJobName = 'generate-certificate' | 'bulk-generate';
+export type CertificateJobName = 'generate-certificate';
+export type BatchDispatchJobName = 'dispatch-batch';
 
 export type CertificateJobPayloadMap = {
   'generate-certificate': GenerateCertificateJob;
-  'bulk-generate': BulkGenerateJob;
 };
 
-export type CertificateQueueJobs = {
-  [K in CertificateJobName]: {
-    name: K;
-    data: CertificateJobPayloadMap[K];
-  };
-}[CertificateJobName];
+export type BatchDispatchJobPayloadMap = {
+  'dispatch-batch': DispatchBatchJob;
+};
 
 export const defaultJobOptions = {
   attempts: 3,
@@ -24,5 +21,13 @@ export const defaultJobOptions = {
   removeOnComplete: 100,
   removeOnFail: 200,
 };
+
+export function certificateJobId(documentId: string): string {
+  return `generate-${documentId}`;
+}
+
+export function batchDispatchJobId(batchId: string): string {
+  return `dispatch-${batchId}`;
+}
 
 export { QUEUE_NAMES };
