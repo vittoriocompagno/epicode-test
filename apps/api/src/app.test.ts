@@ -1,9 +1,12 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
+import { Redis } from 'ioredis';
 import { buildApp } from './app.js';
 import type { Env } from './env.js';
 
 const API_KEY = 'test-api-key';
+const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379';
+const RATE_LIMIT_NAMESPACE = 'certificates-api-rate-limit-';
 
 const testEnv: Env = {
   NODE_ENV: 'test',
@@ -12,7 +15,7 @@ const testEnv: Env = {
   DATABASE_URL:
     process.env.TEST_DATABASE_URL ??
     'postgresql://postgres:postgres@localhost:5432/certificates_test',
-  REDIS_URL: process.env.REDIS_URL ?? 'redis://localhost:6379',
+  REDIS_URL,
   API_KEY,
   LOCAL_STORAGE_PATH: './data/test-documents',
   BODY_LIMIT_BYTES: 1_048_576,
@@ -26,6 +29,19 @@ const testEnv: Env = {
   BATCH_RATE_LIMIT_MAX: 1000,
   BATCH_RATE_LIMIT_WINDOW_MS: 60_000,
 };
+
+async function flushRateLimitKeys(): Promise<void> {
+  const redis = new Redis(REDIS_URL, { maxRetriesPerRequest: 1, lazyConnect: true });
+  try {
+    await redis.connect();
+    const keys = await redis.keys(`${RATE_LIMIT_NAMESPACE}*`);
+    if (keys.length > 0) {
+      await redis.del(...keys);
+    }
+  } finally {
+    redis.disconnect();
+  }
+}
 
 function authHeaders(extra: Record<string, string> = {}) {
   return {
@@ -414,6 +430,122 @@ describe('API integration', () => {
       api: { status: 'ok' },
       templates: 1,
       documentsByStatus: { draft: 2 },
+    });
+  });
+});
+
+describe('API rate limiting', () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    await flushRateLimitKeys();
+    app = await buildApp({
+      ...testEnv,
+      PREVIEW_RATE_LIMIT_MAX: 2,
+      PREVIEW_RATE_LIMIT_WINDOW_MS: 60_000,
+      GENERATE_RATE_LIMIT_MAX: 2,
+      GENERATE_RATE_LIMIT_WINDOW_MS: 60_000,
+    });
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await flushRateLimitKeys();
+  });
+
+  beforeEach(async () => {
+    await flushRateLimitKeys();
+    await app.db.sql`truncate table batch_items, generation_batches, documents, templates restart identity cascade`;
+  });
+
+  it('returns 429 when preview exceeds the rate limit', async () => {
+    const templateResponse = await app.inject({
+      method: 'POST',
+      url: '/api/templates',
+      headers: jsonHeaders(),
+      payload: {
+        name: 'Rate limited preview',
+        html: '<p>{{studentName}}</p>',
+      },
+    });
+    expect(templateResponse.statusCode).toBe(201);
+    const template = templateResponse.json();
+
+    const payload = {
+      variables: { studentName: 'Ada' },
+    };
+
+    const first = await app.inject({
+      method: 'POST',
+      url: `/api/templates/${template.id}/preview`,
+      headers: jsonHeaders(),
+      payload,
+    });
+    const second = await app.inject({
+      method: 'POST',
+      url: `/api/templates/${template.id}/preview`,
+      headers: jsonHeaders(),
+      payload,
+    });
+    const third = await app.inject({
+      method: 'POST',
+      url: `/api/templates/${template.id}/preview`,
+      headers: jsonHeaders(),
+      payload,
+    });
+
+    expect(first.statusCode).toBe(200);
+    expect(second.statusCode).toBe(200);
+    expect(third.statusCode).toBe(429);
+    expect(third.json()).toMatchObject({
+      error: { code: 'RATE_LIMIT_EXCEEDED' },
+    });
+  });
+
+  it('returns 429 when generate exceeds the rate limit', async () => {
+    const templateResponse = await app.inject({
+      method: 'POST',
+      url: '/api/templates',
+      headers: jsonHeaders(),
+      payload: {
+        name: 'Rate limited generate',
+        html: '<p>{{name}}</p>',
+      },
+    });
+    const template = templateResponse.json();
+
+    const documentResponse = await app.inject({
+      method: 'POST',
+      url: '/api/documents',
+      headers: jsonHeaders(),
+      payload: {
+        templateId: template.id,
+        variables: { name: 'Ada' },
+      },
+    });
+    const document = documentResponse.json();
+
+    const first = await app.inject({
+      method: 'POST',
+      url: `/api/documents/${document.id}/generate`,
+      headers: authHeaders(),
+    });
+    const second = await app.inject({
+      method: 'POST',
+      url: `/api/documents/${document.id}/generate`,
+      headers: authHeaders(),
+    });
+    const third = await app.inject({
+      method: 'POST',
+      url: `/api/documents/${document.id}/generate`,
+      headers: authHeaders(),
+    });
+
+    expect(first.statusCode).toBe(202);
+    expect(second.statusCode).toBe(202);
+    expect(third.statusCode).toBe(429);
+    expect(third.json()).toMatchObject({
+      error: { code: 'RATE_LIMIT_EXCEEDED' },
     });
   });
 });

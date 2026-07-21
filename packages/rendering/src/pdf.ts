@@ -100,11 +100,14 @@ export class PlaywrightPdfRenderer implements PdfRenderer {
 export class FakePdfRenderer implements PdfRenderer {
   readonly calls: string[] = [];
   failNext = false;
+  failAlways = false;
 
   async render(html: string): Promise<Buffer> {
     this.calls.push(html);
-    if (this.failNext) {
-      this.failNext = false;
+    if (this.failAlways || this.failNext) {
+      if (!this.failAlways) {
+        this.failNext = false;
+      }
       throw new Error('Fake PDF renderer failure');
     }
     return Buffer.from(`%PDF-1.4\n% fake pdf for ${html.length} bytes\n%%EOF\n`, 'utf8');
