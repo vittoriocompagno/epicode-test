@@ -1,0 +1,97 @@
+services:
+  web:
+    image: ghcr.io/vittoriocompagno/epicode-test/web:latest
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    expose:
+      - '80'
+
+  api:
+    image: ghcr.io/vittoriocompagno/epicode-test/api:latest
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      API_PORT: 3000
+      WEB_ORIGIN: ${WEB_ORIGIN}
+      DATABASE_URL: postgresql://certificates:${POSTGRES_PASSWORD}@postgres:5432/certificates
+      REDIS_URL: redis://redis:6379
+      API_KEY: ${API_KEY}
+      LOCAL_STORAGE_PATH: /data/documents
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    expose:
+      - '3000'
+    volumes:
+      - documents:/data/documents
+
+  worker:
+    image: ghcr.io/vittoriocompagno/epicode-test/worker:latest
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://certificates:${POSTGRES_PASSWORD}@postgres:5432/certificates
+      REDIS_URL: redis://redis:6379
+      LOCAL_STORAGE_PATH: /data/documents
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+      BATCH_DISPATCH_CHUNK_SIZE: ${BATCH_DISPATCH_CHUNK_SIZE:-500}
+      PDF_TIMEOUT_MS: ${PDF_TIMEOUT_MS:-15000}
+      MAIL_ENABLED: ${MAIL_ENABLED:-true}
+      MAIL_HOST: mailpit
+      MAIL_PORT: 1025
+      MAIL_FROM: ${MAIL_FROM:-certificates@localhost}
+    depends_on:
+      api:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    volumes:
+      - documents:/data/documents
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: certificates
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: certificates
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U certificates -d certificates']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - redis:/data
+
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    environment:
+      MP_DATABASE: /data/mailpit.db
+    expose:
+      - '1025'
+      - '8025'
+    volumes:
+      - mailpit:/data
+
+volumes:
+  documents:
+  postgres:
+  redis:
+  mailpit:

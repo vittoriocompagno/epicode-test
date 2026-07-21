@@ -13,8 +13,8 @@ permissions:
   contents: read
 
 env:
-  NODE_VERSION: "22"
-  PNPM_VERSION: "11.13.1"
+  NODE_VERSION: '22'
+  PNPM_VERSION: '11.13.1'
   REGISTRY: ghcr.io
 
 jobs:
@@ -117,6 +117,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - target: web
+            image_suffix: web
           - target: api
             image_suffix: api
           - target: worker

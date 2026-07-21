@@ -22,10 +22,14 @@ import type {
   UpdateDocumentInput,
   UpdateTemplateInput,
 } from '@certificates/contracts';
+import { resolveApiBaseUrl } from './api-base-url.js';
 import { ApiErrorBodySchema } from '@certificates/contracts';
 import { getApiKey, notifyUnauthorized } from '@/lib/auth';
 
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000';
+export const API_BASE_URL = resolveApiBaseUrl(
+  import.meta.env.VITE_API_BASE_URL,
+  window.location.origin,
+);
 
 export class ApiClientError extends Error {
   readonly status: number;
@@ -65,11 +69,7 @@ function buildUrl(path: string, params?: Record<string, string | number | undefi
   return url.toString();
 }
 
-function buildHeaders(
-  body?: unknown,
-  extra?: HeadersInit,
-  apiKeyOverride?: string,
-): HeadersInit {
+function buildHeaders(body?: unknown, extra?: HeadersInit, apiKeyOverride?: string): HeadersInit {
   const headers: Record<string, string> = {};
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
@@ -162,8 +162,7 @@ export const api = {
   listTemplates: (params?: TemplateListQuery) =>
     fetchJson<PaginatedTemplates>('/api/templates', { params }),
 
-  getTemplate: (templateId: string) =>
-    fetchJson<TemplateResponse>(`/api/templates/${templateId}`),
+  getTemplate: (templateId: string) => fetchJson<TemplateResponse>(`/api/templates/${templateId}`),
 
   createTemplate: (body: CreateTemplateInput) =>
     fetchJson<TemplateResponse>('/api/templates', { method: 'POST', body }),
@@ -183,8 +182,7 @@ export const api = {
   listDocuments: (params?: DocumentListQuery) =>
     fetchJson<PaginatedDocuments>('/api/documents', { params }),
 
-  getDocument: (documentId: string) =>
-    fetchJson<DocumentResponse>(`/api/documents/${documentId}`),
+  getDocument: (documentId: string) => fetchJson<DocumentResponse>(`/api/documents/${documentId}`),
 
   createDocument: (body: CreateDocumentInput) =>
     fetchJson<DocumentResponse>('/api/documents', { method: 'POST', body }),
@@ -204,11 +202,9 @@ export const api = {
   getDocumentStatus: (documentId: string) =>
     fetchJson<DocumentStatusResponse>(`/api/documents/${documentId}/status`),
 
-  downloadPdf: (documentId: string) =>
-    fetchBlob(`/api/documents/${documentId}/download`),
+  downloadPdf: (documentId: string) => fetchBlob(`/api/documents/${documentId}/download`),
 
-  listBatches: (params?: BatchListQuery) =>
-    fetchJson<PaginatedBatches>('/api/batches', { params }),
+  listBatches: (params?: BatchListQuery) => fetchJson<PaginatedBatches>('/api/batches', { params }),
 
   getBatch: (batchId: string) => fetchJson<BatchStatusResponse>(`/api/batches/${batchId}`),
 

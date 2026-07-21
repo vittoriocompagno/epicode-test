@@ -22,20 +22,8 @@ pnpm dev
 | Postgres    | `localhost:5432`      |
 | Redis       | `localhost:6379`      |
 
-Development API key (from `.env.example`):
-
-```text
-development-api-key
-```
-
-Enter that key in the web console (stored in `sessionStorage` only). This is a local challenge interface, not production authentication.
-
-Optional demo against a running API + worker:
-
-```bash
-pnpm demo:seed
-pnpm demo:generate
-```
+The web console prompts for the `API_KEY` configured in `.env` and keeps it in
+`sessionStorage` for the current browser session.
 
 ## CI / Docker
 
@@ -45,13 +33,14 @@ GitHub Actions (`.github/workflows/ci.yml`) on every push/PR:
 2. **Typecheck** — `pnpm typecheck`
 3. **Build** — `pnpm build`
 4. **Test** — `pnpm test` (Postgres + Redis service containers)
-5. **Images** — multi-target `Dockerfile` → GHCR (`api`, `worker`)
+5. **Images** — multi-target `Dockerfile` → GHCR (`web`, `api`, `worker`)
 
 Images are pushed from the default branch; pull requests build them without pushing:
 
 ```text
 ghcr.io/<owner>/epicode-test/api:latest
 ghcr.io/<owner>/epicode-test/worker:latest
+ghcr.io/<owner>/epicode-test/web:latest
 ```
 
 Local image build:
@@ -59,6 +48,7 @@ Local image build:
 ```bash
 docker build --target api -t certificates-api .
 docker build --target worker -t certificates-worker .
+docker build --target web -t certificates-web .
 ```
 
 Container run expects env vars from `.env.example` (`DATABASE_URL`, `REDIS_URL`, `API_KEY`, `WEB_ORIGIN`, …). Use absolute `LOCAL_STORAGE_PATH` (default in image: `/data/documents`).
@@ -68,9 +58,9 @@ Container run expects env vars from `.env.example` (`DATABASE_URL`, `REDIS_URL`,
 Independently runnable deployment units in one monorepo — not a microservice platform.
 
 ```text
-React control plane
+React web console / Nginx
         |
-        | X-API-Key
+        | /api + X-API-Key
         v
 Fastify API
         |
@@ -92,17 +82,17 @@ PDF generation never runs inside the API process.
 
 ## Deployment architecture
 
-Deploy the API and worker as separate containers in the same private network. They share PostgreSQL, Redis, and the PDF storage volume; only the API is exposed publicly.
+Deploy the web console, API, and worker as separate containers in one private network. API and worker share PostgreSQL, Redis, and the PDF storage volume; only the web console is exposed publicly. Nginx serves the SPA and proxies `/api` to the API container.
 
 ```text
                          private deployment network
 
-Internet ── HTTPS ──> API :3000 ───────> PostgreSQL
-                         │                    ▲
-                         │                    │
-                         └────> Redis <──── Worker replicas
-                                  │              │
-                                  └── BullMQ ────┘
+Internet ── HTTPS ──> Web :80 ── /api ──> API :3000 ─────> PostgreSQL
+                                            │                  ▲
+                                            │                  │
+                                            └──> Redis <──── Worker replicas
+                                                   │               │
+                                                   └── BullMQ ─────┘
 
 API    ── /data/documents ── shared persistent volume
 Worker ── /data/documents ── shared persistent volume
@@ -113,6 +103,7 @@ Run both images from the same release:
 ```text
 ghcr.io/<owner>/epicode-test/api:latest
 ghcr.io/<owner>/epicode-test/worker:latest
+ghcr.io/<owner>/epicode-test/web:latest
 ```
 
 The services connect through internal DNS names supplied by the deployment platform:
@@ -126,12 +117,14 @@ LOCAL_STORAGE_PATH=/data/documents
 Deployment requirements:
 
 - Mount the same persistent volume at `/data/documents` in the API and every worker replica. The worker writes PDFs and the API serves them for download.
-- Expose the API on port `3000`; do not expose workers, PostgreSQL, or Redis publicly.
+- Assign the public domain to the web service on port `80`; do not expose the API, workers, PostgreSQL, Redis, or Mailpit publicly.
 - Set the same `DATABASE_URL`, `REDIS_URL`, and `LOCAL_STORAGE_PATH` for the API and workers.
 - Set `API_KEY` and `WEB_ORIGIN` on the API. Set `WORKER_CONCURRENCY`, `BATCH_DISPATCH_CHUNK_SIZE`, PDF, and mail variables on workers.
 - The API image applies database migrations before starting the server. Worker images never run migrations.
 - The API healthcheck calls the authenticated, database-independent `/health` endpoint and allows a 30-second start period for migrations.
 - Scale certificate throughput by adding worker replicas or increasing `WORKER_CONCURRENCY`; API requests never render PDFs inline.
+
+`docker-compose.coolify.yml` defines the complete production stack. Coolify only needs `API_KEY`, `POSTGRES_PASSWORD`, and `WEB_ORIGIN`; the remaining settings have safe defaults in the Compose file.
 
 For this local-filesystem implementation, API and workers must run on hosts that can mount the same storage. A multi-host deployment should replace `DocumentStorage` with an S3-compatible adapter rather than attempting to synchronize local volumes.
 
@@ -140,7 +133,7 @@ For this local-filesystem implementation, API and workers must run on hosts that
 ```text
 apps/api       Fastify HTTP API
 apps/worker    BullMQ consumers (certificate + batch dispatch)
-apps/web       React evaluator console
+apps/web       React web console
 packages/contracts   Zod schemas + shared types
 packages/database    Drizzle schema + migrations
 packages/queue       BullMQ helpers
@@ -168,7 +161,7 @@ scripts/       load test + demo flows
 ## Frontend usage
 
 1. Open http://localhost:5173
-2. Paste `development-api-key`
+2. Enter the value configured as `API_KEY` in `.env`
 3. **Templates** — create/edit HTML, preview in a sandboxed iframe (via API)
 4. **Documents** — draft → generate → poll → download
 5. **Bulk** — small JSON batches and progress (use `pnpm test:load` for 10k)
@@ -179,13 +172,10 @@ OpenAPI specification (no unauthenticated Swagger UI):
 
 [`docs/openapi.yaml`](docs/openapi.yaml)
 
-Technical review notes: [`docs/technical-review.md`](docs/technical-review.md)  
-Rubric self-assessment: [`docs/rubric-assessment.md`](docs/rubric-assessment.md)
-
 All HTTP routes require:
 
 ```http
-X-API-Key: development-api-key
+X-API-Key: <your-api-key>
 ```
 
 ## PDF generation flow
@@ -266,9 +256,9 @@ See `.env.example` for `API_KEY`, ports, rate limits, Mailpit, storage path, wor
 
 Drizzle SQL under `packages/database/drizzle/`. Apply with `pnpm db:migrate`.
 
-## What is implemented vs simplified
+## Scope and trade-offs
 
-| Implemented                    | Simplified for the challenge           |
+| Current implementation         | Trade-off                              |
 | ------------------------------ | -------------------------------------- |
 | Full async PDF + bulk pipeline | Single shared API key (no OAuth/users) |
 | Local FS storage adapter       | Not multi-region object storage        |
@@ -276,7 +266,7 @@ Drizzle SQL under `packages/database/drizzle/`. Apply with `pnpm db:migrate`.
 | React control plane            | `sessionStorage` key gate only         |
 | OpenAPI file                   | No hosted Swagger UI                   |
 
-## Production evolution
+## Production roadmap
 
 - Replace local storage with S3-compatible backend
 - Replace shared API key with service identities / OIDC
