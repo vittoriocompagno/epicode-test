@@ -10,6 +10,7 @@ import storagePlugin from './plugins/storage.js';
 import batchRoutes from './routes/batches.js';
 import documentRoutes from './routes/documents.js';
 import healthRoutes from './routes/health.js';
+import overviewRoutes from './routes/overview.js';
 import templateRoutes from './routes/templates.js';
 
 export async function buildApp(env: Env): Promise<FastifyInstance> {
@@ -31,6 +32,7 @@ export async function buildApp(env: Env): Promise<FastifyInstance> {
   await app.register(apiKeyPlugin, { apiKey: env.API_KEY });
   await app.register(rateLimitPlugin, { redisUrl: env.REDIS_URL });
   await app.register(healthRoutes);
+  await app.register(overviewRoutes);
   await app.register(templateRoutes, { env });
   await app.register(documentRoutes, { env });
   await app.register(batchRoutes, { env });

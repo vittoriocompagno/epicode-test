@@ -1,4 +1,4 @@
-import { CreateBatchSchema } from '@certificates/contracts';
+import { BatchListQuerySchema, CreateBatchSchema } from '@certificates/contracts';
 import type { FastifyPluginAsync } from 'fastify';
 import type { Env } from '../env.js';
 import { parseUuidParam, parseWithSchema } from '../lib/validation.js';
@@ -6,6 +6,11 @@ import { BatchService } from '../services/batches.js';
 
 const batchRoutes: FastifyPluginAsync<{ env: Env }> = async (app, opts) => {
   const batches = new BatchService(app.db.db, app.batchDispatchQueue);
+
+  app.get('/api/batches', async (request) => {
+    const query = parseWithSchema(BatchListQuerySchema, request.query);
+    return batches.list(query);
+  });
 
   app.post(
     '/api/batches',

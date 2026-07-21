@@ -108,7 +108,11 @@ export type DocumentStatus = z.infer<typeof DocumentStatusSchema>;
 const DocumentVariablesSchema = z
   .record(z.unknown())
   .superRefine((value, ctx) => {
-    const size = Buffer.byteLength(JSON.stringify(value), 'utf8');
+    const json = JSON.stringify(value);
+    const size =
+      typeof Buffer !== 'undefined'
+        ? Buffer.byteLength(json, 'utf8')
+        : new TextEncoder().encode(json).length;
     if (size > MAX_DOCUMENT_VARIABLES_JSON_BYTES) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -258,6 +262,36 @@ export const BatchStatusResponseSchema = z.object({
 });
 
 export type BatchStatusResponse = z.infer<typeof BatchStatusResponseSchema>;
+
+export const BatchListQuerySchema = PaginationQuerySchema.strict();
+
+export type BatchListQuery = z.infer<typeof BatchListQuerySchema>;
+
+export const PaginatedBatchesSchema = z.object({
+  items: z.array(BatchStatusResponseSchema),
+  page: z.number().int().positive(),
+  pageSize: z.number().int().positive(),
+  total: z.number().int().nonnegative(),
+  totalPages: z.number().int().nonnegative(),
+});
+
+export type PaginatedBatches = z.infer<typeof PaginatedBatchesSchema>;
+
+export const OverviewResponseSchema = z.object({
+  api: HealthResponseSchema,
+  templates: z.number().int().nonnegative(),
+  documentsByStatus: z.object({
+    draft: z.number().int().nonnegative(),
+    queued: z.number().int().nonnegative(),
+    processing: z.number().int().nonnegative(),
+    completed: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+  }),
+  recentDocuments: z.array(DocumentResponseSchema),
+  recentBatches: z.array(BatchStatusResponseSchema),
+});
+
+export type OverviewResponse = z.infer<typeof OverviewResponseSchema>;
 
 /** Lightweight BullMQ payloads — never embed templates or PDF buffers. */
 export const GenerateCertificateJobSchema = z.object({

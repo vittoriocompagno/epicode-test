@@ -56,12 +56,21 @@ describe('API integration', () => {
     await app.db.sql`truncate table batch_items, generation_batches, documents, templates restart identity cascade`;
   });
 
-  it('rejects missing API key with 401', async () => {
-    const response = await app.inject({ method: 'GET', url: '/health' });
-    expect(response.statusCode).toBe(401);
-    expect(response.json()).toMatchObject({
-      error: { code: 'UNAUTHORIZED' },
-    });
+  it('rejects missing API key with 401 on protected endpoints', async () => {
+    const paths = [
+      '/health',
+      '/api/overview',
+      '/api/templates',
+      '/api/documents',
+      '/api/batches',
+    ];
+    for (const url of paths) {
+      const response = await app.inject({ method: 'GET', url });
+      expect(response.statusCode).toBe(401);
+      expect(response.json()).toMatchObject({
+        error: { code: 'UNAUTHORIZED' },
+      });
+    }
   });
 
   it('rejects invalid API key with 401', async () => {
@@ -386,5 +395,25 @@ describe('API integration', () => {
     });
     expect(progress.statusCode).toBe(200);
     expect(progress.json().total).toBe(2);
+
+    const listed = await app.inject({
+      method: 'GET',
+      url: '/api/batches',
+      headers: authHeaders(),
+    });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json().total).toBe(1);
+
+    const overview = await app.inject({
+      method: 'GET',
+      url: '/api/overview',
+      headers: authHeaders(),
+    });
+    expect(overview.statusCode).toBe(200);
+    expect(overview.json()).toMatchObject({
+      api: { status: 'ok' },
+      templates: 1,
+      documentsByStatus: { draft: 2 },
+    });
   });
 });

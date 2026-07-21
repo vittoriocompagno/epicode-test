@@ -1,8 +1,10 @@
 import {
   CreateBatchSchema,
   type BatchAccepted,
+  type BatchListQuery,
   type BatchStatusResponse,
   type CreateBatchInput,
+  type PaginatedBatches,
 } from '@certificates/contracts';
 import {
   batchItems,
@@ -14,7 +16,7 @@ import {
   enqueueBatchDispatch,
   type BatchDispatchQueue,
 } from '@certificates/queue';
-import { count, eq } from 'drizzle-orm';
+import { count, desc, eq } from 'drizzle-orm';
 import { AppError } from '../errors.js';
 import { DocumentRepository } from '../repositories/documents.js';
 import { TemplateRepository } from '../repositories/templates.js';
@@ -95,6 +97,29 @@ export class BatchService {
       batchId: batch.id,
       status: 'queued',
       total: batch.totalCount,
+    };
+  }
+
+  async list(query: BatchListQuery): Promise<PaginatedBatches> {
+    const offset = (query.page - 1) * query.pageSize;
+    const [totalRow] = await this.db.select({ value: count() }).from(generationBatches);
+    const total = Number(totalRow?.value ?? 0);
+
+    const rows = await this.db
+      .select()
+      .from(generationBatches)
+      .orderBy(desc(generationBatches.createdAt))
+      .limit(query.pageSize)
+      .offset(offset);
+
+    const items = await Promise.all(rows.map((row) => this.get(row.id)));
+
+    return {
+      items,
+      page: query.page,
+      pageSize: query.pageSize,
+      total,
+      totalPages: total === 0 ? 0 : Math.ceil(total / query.pageSize),
     };
   }
 
