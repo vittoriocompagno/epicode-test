@@ -194,14 +194,6 @@ export function renderTemplate(
   }
 }
 
-export async function renderHtmlToPdf(
-  html: string,
-  renderer: import('./pdf.js').PdfRenderer,
-  options?: import('./pdf.js').PdfRenderOptions,
-): Promise<Buffer> {
-  return renderer.render(html, options);
-}
-
 export {
   FakePdfRenderer,
   PlaywrightPdfRenderer,
@@ -241,6 +233,13 @@ export function getByPath(source: Record<string, unknown>, path: string): unknow
   }
 
   return current;
+}
+
+export function findMissingVariables(
+  required: string[],
+  variables: Record<string, unknown>,
+): string[] {
+  return required.filter((path) => getByPath(variables, path) === undefined);
 }
 
 function normalizeVariables(variables: Record<string, unknown>): Record<string, unknown> {

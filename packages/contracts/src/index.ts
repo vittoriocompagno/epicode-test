@@ -188,6 +188,16 @@ export const PreviewRequestSchema = z
 
 export type PreviewRequest = z.infer<typeof PreviewRequestSchema>;
 
+/** Side-effect-free preview of unsaved HTML (does not persist a template). */
+export const AdHocPreviewRequestSchema = z
+  .object({
+    html: z.string().min(1).max(MAX_TEMPLATE_HTML_LENGTH),
+    variables: DocumentVariablesSchema.default({}),
+  })
+  .strict();
+
+export type AdHocPreviewRequest = z.infer<typeof AdHocPreviewRequestSchema>;
+
 export const PreviewResponseSchema = z.object({
   html: z.string(),
   variables: z.array(z.string()),

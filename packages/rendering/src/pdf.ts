@@ -19,11 +19,17 @@ export class PlaywrightPdfRenderer implements PdfRenderer {
   private browser: Browser | null = null;
   private launching: Promise<Browser> | null = null;
 
-  constructor(private readonly launchOptions: { headless?: boolean } = {}) {}
+  constructor(
+    private readonly launchOptions: {
+      headless?: boolean;
+      timeoutMs?: number;
+      maxHtmlBytes?: number;
+    } = {},
+  ) {}
 
   async render(html: string, options: PdfRenderOptions = {}): Promise<Buffer> {
-    const maxHtmlBytes = options.maxHtmlBytes ?? DEFAULT_MAX_HTML_BYTES;
-    const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const maxHtmlBytes = options.maxHtmlBytes ?? this.launchOptions.maxHtmlBytes ?? DEFAULT_MAX_HTML_BYTES;
+    const timeoutMs = options.timeoutMs ?? this.launchOptions.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
     if (Buffer.byteLength(html, 'utf8') > maxHtmlBytes) {
       throw new Error(`HTML exceeds maximum size of ${maxHtmlBytes} bytes`);

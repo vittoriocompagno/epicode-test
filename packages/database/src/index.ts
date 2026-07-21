@@ -12,3 +12,21 @@ export {
   batchStatusEnum,
   batchItemStatusEnum,
 } from './schema.js';
+export {
+  claimDocumentForProcessing,
+  markDocumentCompleted,
+  markDocumentFailed,
+  markDocumentQueued,
+  markDocumentsQueued,
+  requeueDocumentAfterTransientFailure,
+  type DocumentRow,
+  type DocumentStatus,
+} from './document-lifecycle.js';
+export {
+  deriveBatchStatus,
+  persistDerivedBatchStatus,
+  summarizeBatch,
+  summarizeBatches,
+  type BatchProgress,
+  type BatchProgressCounts,
+} from './batch-progress.js';
