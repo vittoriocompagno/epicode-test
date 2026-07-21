@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Builds
+dist/
+build/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Local data
+data/
+coverage/
+playwright-report/
+test-results/
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Vitest
+.vitest/
+
+# Drizzle
+drizzle/meta/*_snapshot.json.bak
+
+# Playwright browsers (installed locally by apps/worker)
+apps/worker/.playwright/

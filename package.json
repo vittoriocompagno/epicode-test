@@ -1,0 +1,39 @@
+{
+  "name": "certificates",
+  "type": "module",
+  "private": true,
+  "packageManager": "pnpm@11.13.1",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "packages:build": "pnpm -r --filter @certificates/contracts --filter @certificates/database --filter @certificates/queue --filter @certificates/storage --filter @certificates/rendering run build",
+    "predev": "pnpm packages:build",
+    "dev": "pnpm -r --parallel --filter @certificates/contracts --filter @certificates/database --filter @certificates/queue --filter @certificates/storage --filter @certificates/rendering --filter @certificates/web --filter @certificates/api --filter @certificates/worker run dev",
+    "build": "pnpm -r --filter @certificates/contracts --filter @certificates/database --filter @certificates/queue --filter @certificates/storage --filter @certificates/rendering --filter @certificates/api --filter @certificates/worker --filter @certificates/web run build",
+    "pretest": "pnpm packages:build",
+    "test": "pnpm -r --filter @certificates/contracts --filter @certificates/api --filter @certificates/worker --filter @certificates/queue run test",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "pretypecheck": "pnpm packages:build",
+    "typecheck": "pnpm -r run typecheck",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:generate": "pnpm --filter @certificates/database run db:generate",
+    "db:migrate": "pnpm --filter @certificates/database run db:migrate",
+    "db:studio": "pnpm --filter @certificates/database run db:studio"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@types/node": "^22.19.3",
+    "eslint": "^9.39.2",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.26",
+    "globals": "^16.5.0",
+    "prettier": "^3.7.4",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.50.0",
+    "vitest": "^3.2.4"
+  }
+}

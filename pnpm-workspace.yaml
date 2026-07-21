@@ -1,0 +1,12 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Delay dependency installs to blunt supply-chain attacks (24h).
+minimumReleaseAge: 1440
+minimumReleaseAgeExclude:
+  - "@certificates/*"
+
+allowBuilds:
+  esbuild: true
+  msgpackr-extract: true
