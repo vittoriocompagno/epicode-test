@@ -26,6 +26,7 @@ async function main(): Promise<void> {
 
   const app = await buildApp(env);
   const queue = createCertificateQueue(env.REDIS_URL);
+  await queue.obliterate({ force: true });
   await queue.pause();
 
   await app.db.sql`truncate table batch_items, generation_batches, documents, templates restart identity cascade`;
