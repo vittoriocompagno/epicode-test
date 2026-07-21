@@ -5,7 +5,7 @@ import type {
   UpdateDocumentInput,
 } from '@certificates/contracts';
 import { documents, type Database } from '@certificates/database';
-import { and, count, desc, eq } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, sql } from 'drizzle-orm';
 import { AppError } from '../errors.js';
 
 function toDocumentResponse(row: typeof documents.$inferSelect): DocumentResponse {
@@ -17,6 +17,11 @@ function toDocumentResponse(row: typeof documents.$inferSelect): DocumentRespons
     outputPath: row.outputPath,
     errorCode: row.errorCode,
     errorMessage: row.errorMessage,
+    attemptCount: row.attemptCount,
+    emailTo: row.emailTo,
+    emailStatus: row.emailStatus,
+    emailError: row.emailError,
+    emailedAt: row.emailedAt ? row.emailedAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     generatedAt: row.generatedAt ? row.generatedAt.toISOString() : null,
@@ -33,6 +38,8 @@ export class DocumentRepository {
         templateId: input.templateId,
         variables: input.variables,
         status: 'draft',
+        emailTo: input.emailTo ?? null,
+        emailStatus: input.emailTo ? 'pending' : 'skipped',
       })
       .returning();
 
@@ -41,6 +48,33 @@ export class DocumentRepository {
     }
 
     return toDocumentResponse(row);
+  }
+
+  async createMany(
+    values: Array<{
+      templateId: string;
+      variables: Record<string, unknown>;
+      emailTo?: string | null;
+    }>,
+  ): Promise<DocumentResponse[]> {
+    if (values.length === 0) {
+      return [];
+    }
+
+    const rows = await this.db
+      .insert(documents)
+      .values(
+        values.map((value) => ({
+          templateId: value.templateId,
+          variables: value.variables,
+          status: 'draft' as const,
+          emailTo: value.emailTo ?? null,
+          emailStatus: value.emailTo ? ('pending' as const) : ('skipped' as const),
+        })),
+      )
+      .returning();
+
+    return rows.map(toDocumentResponse);
   }
 
   async findById(id: string): Promise<DocumentResponse | null> {
@@ -87,6 +121,94 @@ export class DocumentRepository {
       .returning();
 
     return row ? toDocumentResponse(row) : null;
+  }
+
+  async markQueued(id: string, fromStatuses: Array<DocumentResponse['status']>): Promise<DocumentResponse | null> {
+    const [row] = await this.db
+      .update(documents)
+      .set({
+        status: 'queued',
+        errorCode: null,
+        errorMessage: null,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(documents.id, id), inArray(documents.status, fromStatuses)))
+      .returning();
+
+    return row ? toDocumentResponse(row) : null;
+  }
+
+  /**
+   * Atomic ownership claim: only one worker can move queued → processing.
+   */
+  async claimForProcessing(id: string): Promise<DocumentResponse | null> {
+    const [row] = await this.db
+      .update(documents)
+      .set({
+        status: 'processing',
+        attemptCount: sql`${documents.attemptCount} + 1`,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(documents.id, id), eq(documents.status, 'queued')))
+      .returning();
+
+    return row ? toDocumentResponse(row) : null;
+  }
+
+  async markCompleted(
+    id: string,
+    input: { outputPath: string },
+  ): Promise<DocumentResponse | null> {
+    const [row] = await this.db
+      .update(documents)
+      .set({
+        status: 'completed',
+        outputPath: input.outputPath,
+        errorCode: null,
+        errorMessage: null,
+        generatedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(and(eq(documents.id, id), eq(documents.status, 'processing')))
+      .returning();
+
+    return row ? toDocumentResponse(row) : null;
+  }
+
+  async markFailed(
+    id: string,
+    input: { errorCode: string; errorMessage: string },
+  ): Promise<DocumentResponse | null> {
+    const [row] = await this.db
+      .update(documents)
+      .set({
+        status: 'failed',
+        errorCode: input.errorCode,
+        errorMessage: input.errorMessage,
+        updatedAt: new Date(),
+      })
+      .where(eq(documents.id, id))
+      .returning();
+
+    return row ? toDocumentResponse(row) : null;
+  }
+
+  async markEmailResult(
+    id: string,
+    input:
+      | { status: 'sent' }
+      | { status: 'failed'; error: string }
+      | { status: 'skipped' },
+  ): Promise<void> {
+    await this.db
+      .update(documents)
+      .set({
+        emailStatus: input.status,
+        emailError: input.status === 'failed' ? input.error : null,
+        emailedAt: input.status === 'sent' ? new Date() : null,
+        updatedAt: new Date(),
+      })
+      .where(eq(documents.id, id));
   }
 
   async delete(id: string): Promise<boolean> {

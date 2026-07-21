@@ -14,11 +14,17 @@ const testEnv: Env = {
     'postgresql://postgres:postgres@localhost:5432/certificates_test',
   REDIS_URL: process.env.REDIS_URL ?? 'redis://localhost:6379',
   API_KEY,
+  LOCAL_STORAGE_PATH: './data/test-documents',
   BODY_LIMIT_BYTES: 1_048_576,
   TEMPLATE_BODY_LIMIT_BYTES: 131_072,
   PREVIEW_BODY_LIMIT_BYTES: 65_536,
+  BATCH_BODY_LIMIT_BYTES: 32_000_000,
   PREVIEW_RATE_LIMIT_MAX: 1000,
   PREVIEW_RATE_LIMIT_WINDOW_MS: 60_000,
+  GENERATE_RATE_LIMIT_MAX: 1000,
+  GENERATE_RATE_LIMIT_WINDOW_MS: 60_000,
+  BATCH_RATE_LIMIT_MAX: 1000,
+  BATCH_RATE_LIMIT_WINDOW_MS: 60_000,
 };
 
 function authHeaders(extra: Record<string, string> = {}) {
@@ -47,7 +53,7 @@ describe('API integration', () => {
   });
 
   beforeEach(async () => {
-    await app.db.sql`truncate table documents, templates restart identity cascade`;
+    await app.db.sql`truncate table batch_items, generation_batches, documents, templates restart identity cascade`;
   });
 
   it('rejects missing API key with 401', async () => {
@@ -274,5 +280,111 @@ describe('API integration', () => {
       headers: authHeaders(),
     });
     expect(docs.json().total).toBe(0);
+  });
+
+  it('requires API keys on generation and batch endpoints', async () => {
+    const paths = [
+      { method: 'POST' as const, url: '/api/documents/00000000-0000-4000-8000-000000000001/generate' },
+      { method: 'POST' as const, url: '/api/documents/00000000-0000-4000-8000-000000000001/retry' },
+      { method: 'GET' as const, url: '/api/documents/00000000-0000-4000-8000-000000000001/status' },
+      { method: 'GET' as const, url: '/api/documents/00000000-0000-4000-8000-000000000001/download' },
+      { method: 'POST' as const, url: '/api/batches' },
+      { method: 'GET' as const, url: '/api/batches/00000000-0000-4000-8000-000000000001' },
+    ];
+
+    for (const path of paths) {
+      const response = await app.inject({
+        method: path.method,
+        url: path.url,
+        headers: path.method === 'POST' ? { 'content-type': 'application/json' } : undefined,
+        payload: path.method === 'POST' && path.url === '/api/batches' ? { templateId: '00000000-0000-4000-8000-000000000001', items: [] } : undefined,
+      });
+      expect(response.statusCode).toBe(401);
+    }
+  });
+
+  it('enqueues generation and rejects invalid retries', async () => {
+    const templateResponse = await app.inject({
+      method: 'POST',
+      url: '/api/templates',
+      headers: jsonHeaders(),
+      payload: {
+        name: 'Generate',
+        html: '<p>{{name}}</p>',
+      },
+    });
+    const template = templateResponse.json();
+
+    const documentResponse = await app.inject({
+      method: 'POST',
+      url: '/api/documents',
+      headers: jsonHeaders(),
+      payload: {
+        templateId: template.id,
+        variables: { name: 'Ada' },
+      },
+    });
+    const document = documentResponse.json();
+
+    const generated = await app.inject({
+      method: 'POST',
+      url: `/api/documents/${document.id}/generate`,
+      headers: authHeaders(),
+    });
+    expect(generated.statusCode).toBe(202);
+    expect(generated.json()).toMatchObject({
+      documentId: document.id,
+      status: 'queued',
+    });
+
+    const status = await app.inject({
+      method: 'GET',
+      url: `/api/documents/${document.id}/status`,
+      headers: authHeaders(),
+    });
+    expect(status.json().status).toBe('queued');
+
+    const retryDraft = await app.inject({
+      method: 'POST',
+      url: `/api/documents/${document.id}/retry`,
+      headers: authHeaders(),
+    });
+    expect(retryDraft.statusCode).toBe(409);
+  });
+
+  it('creates a batch and returns progress metadata', async () => {
+    const templateResponse = await app.inject({
+      method: 'POST',
+      url: '/api/templates',
+      headers: jsonHeaders(),
+      payload: {
+        name: 'Batch',
+        html: '<p>{{name}}</p>',
+      },
+    });
+    const template = templateResponse.json();
+
+    const batchResponse = await app.inject({
+      method: 'POST',
+      url: '/api/batches',
+      headers: jsonHeaders(),
+      payload: {
+        templateId: template.id,
+        items: [{ variables: { name: 'Ada' } }, { variables: { name: 'Grace' } }],
+      },
+    });
+    expect(batchResponse.statusCode).toBe(202);
+    expect(batchResponse.json()).toMatchObject({
+      status: 'queued',
+      total: 2,
+    });
+
+    const progress = await app.inject({
+      method: 'GET',
+      url: `/api/batches/${batchResponse.json().batchId}`,
+      headers: authHeaders(),
+    });
+    expect(progress.statusCode).toBe(200);
+    expect(progress.json().total).toBe(2);
   });
 });
