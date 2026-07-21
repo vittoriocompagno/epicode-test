@@ -37,6 +37,32 @@ pnpm demo:seed
 pnpm demo:generate
 ```
 
+## CI / Docker
+
+GitHub Actions (`.github/workflows/ci.yml`) on every push/PR:
+
+1. **Lint** — `pnpm lint`
+2. **Typecheck** — `pnpm typecheck`
+3. **Build** — `pnpm build`
+4. **Test** — `pnpm test` (Postgres + Redis service containers)
+5. **Images** — multi-target `Dockerfile` → GHCR (`api`, `worker`)
+
+Images are pushed from the default branch; pull requests build them without pushing:
+
+```text
+ghcr.io/<owner>/epicode-test/api:latest
+ghcr.io/<owner>/epicode-test/worker:latest
+```
+
+Local image build:
+
+```bash
+docker build --target api -t certificates-api .
+docker build --target worker -t certificates-worker .
+```
+
+Container run expects env vars from `.env.example` (`DATABASE_URL`, `REDIS_URL`, `API_KEY`, `WEB_ORIGIN`, …). Use absolute `LOCAL_STORAGE_PATH` (default in image: `/data/documents`).
+
 ## Architecture
 
 Independently runnable deployment units in one monorepo — not a microservice platform.
