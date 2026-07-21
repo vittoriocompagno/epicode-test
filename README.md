@@ -1,30 +1,29 @@
 # Certificate Generation API
 
-TypeScript monorepo for certificate template management, document drafts, and safe HTML preview.
+TypeScript monorepo for certificate templates, draft documents, asynchronous PDF generation, and bulk dispatch.
 
 ```text
-apps/web  ──▶  apps/api  ──▶  PostgreSQL
-                  │
-                  ├── Redis (rate limits / future queues)
-                  └── packages/rendering (Handlebars)
-apps/worker ──▶ Redis / PostgreSQL / Playwright (PDF pipeline ready, not wired to generate yet)
+Client
+  ↓
+Fastify API  ──PostgreSQL──┐
+  ↓                        │
+BullMQ / Redis             │
+  ↓                        │
+Worker replicas ───────────┘
+  ↓
+Handlebars → Playwright PDF → Local storage (+ optional Mailpit)
 ```
+
+API and worker are independently runnable. PDF generation never runs inside the API process.
 
 ## Stack
 
-| Area | Choice |
+| Area | Technology |
 | --- | --- |
-| Apps | `apps/api` (Fastify), `apps/worker` (BullMQ), `apps/web` (Vite scaffold) |
+| API | Fastify, Zod, Drizzle, BullMQ producer |
+| Worker | BullMQ consumers, Playwright Chromium, Nodemailer |
 | Packages | `contracts`, `database`, `queue`, `rendering`, `storage` |
-| Data | PostgreSQL + Drizzle ORM |
-| Templates | Handlebars with AST validation and HTML escaping |
-| Auth | Shared `X-API-Key` on every API route |
-
-## Requirements
-
-- Node.js 22+
-- pnpm 11+
-- Docker Compose (PostgreSQL, Redis, Mailpit) or equivalent local services
+| Infra | PostgreSQL, Redis, Mailpit |
 
 ## Setup
 
@@ -34,194 +33,168 @@ docker compose up -d
 pnpm install
 pnpm db:migrate
 pnpm --filter @certificates/api dev
+pnpm --filter @certificates/worker dev
 ```
 
-Run the full workspace with `pnpm dev` (API, worker, web scaffold).
-
-### Environment
-
-| Variable | Purpose |
-| --- | --- |
-| `DATABASE_URL` | PostgreSQL connection string |
-| `REDIS_URL` | Redis for rate limiting (and future queues) |
-| `API_KEY` | Required value for `X-API-Key` |
-| `WEB_ORIGIN` | CORS allowlist for the web origin |
-| `BODY_LIMIT_BYTES` | Global JSON body limit (default 1 MiB) |
-| `TEMPLATE_BODY_LIMIT_BYTES` | Stricter limit for template write routes |
-| `PREVIEW_BODY_LIMIT_BYTES` | Stricter limit for preview |
-| `PREVIEW_RATE_LIMIT_MAX` / `PREVIEW_RATE_LIMIT_WINDOW_MS` | Preview rate limit |
-
-## Data model
-
-### `templates`
-
-| Column | Notes |
-| --- | --- |
-| `id` | UUID PK |
-| `name` | Required |
-| `description` | Nullable |
-| `html` | Handlebars source |
-| `variables` | JSONB string array, derived server-side from the template AST |
-| `created_at` / `updated_at` | Timestamps |
-
-### `documents`
-
-| Column | Notes |
-| --- | --- |
-| `id` | UUID PK |
-| `template_id` | FK → templates (`ON DELETE RESTRICT`) |
-| `variables` | JSONB object |
-| `status` | `draft` \| `queued` \| `processing` \| `completed` \| `failed` |
-| `output_path` / `error_code` / `error_message` / `generated_at` | Nullable generation metadata |
-| `created_at` / `updated_at` | Timestamps |
-
-Documents created via the API start as `draft`. Template delete returns `409` when documents still reference the template.
-
-Document delete is allowed for `draft`, `completed`, and `failed`. `queued` / `processing` return `409`.
-
-## Authentication
-
-Every route requires:
+All HTTP routes require:
 
 ```http
 X-API-Key: <API_KEY>
 ```
 
-Missing or invalid keys return `401` with the standard error envelope. Comparison is constant-time. Keys are never logged.
+## Architecture decisions
 
-```bash
-curl -s -H "X-API-Key: $API_KEY" http://localhost:3000/health
-```
+### Async generation
 
-## Error format
+1. `POST /api/documents/:id/generate` validates state, sets `queued`, enqueues `{ documentId }`, returns `202`.
+2. The worker claims the row with an atomic `queued → processing` update.
+3. It renders HTML with the shared Handlebars engine, creates a PDF through `PdfRenderer`, stores a logical key via `DocumentStorage`, then marks `completed`.
+4. Email is optional and runs after PDF persistence. SMTP failure does not roll back the PDF.
 
-```json
-{
-  "error": {
-    "code": "TEMPLATE_NOT_FOUND",
-    "message": "Template not found",
-    "details": {}
-  }
-}
-```
+### Idempotency
 
-Common status codes: `200`, `201`, `204`, `400`, `401`, `404`, `409`, `413`, `422`, `429`, `500`.
+- BullMQ job id: `generate-<documentId>`
+- Completed documents short-circuit as no-ops
+- Processing ownership uses a conditional SQL update (not check-then-update)
+- Storage key: `documents/<documentId>.pdf`
+- Retries reuse the same document row
+
+BullMQ may deliver jobs more than once; the worker is therefore written to tolerate duplicates.
+
+### State machine
+
+| From | To | Trigger |
+| --- | --- | --- |
+| `draft` | `queued` | generate |
+| `failed` | `queued` | retry / generate |
+| `queued` | `processing` | worker claim |
+| `processing` | `completed` | PDF stored |
+| `processing` | `failed` | final worker failure |
+| `queued` / `processing` / `completed` | same | generate returns current state (no duplicate work) |
+| `processing` | `queued` | transient worker failure (BullMQ will retry) |
+| `processing` | `failed` | final worker failure after max attempts |
+
+### Bulk generation
+
+`POST /api/batches` validates every item, bulk-inserts documents + batch items, and enqueues one `dispatch-batch` job.
+
+The dispatcher loads pending items in chunks (default 500), uses `addBulk`, and marks items `queued`. Progress on `GET /api/batches/:id` is computed from `batch_items` status counts.
+
+### PDF renderer
+
+`PdfRenderer` is the dependency boundary. Production code uses `PlaywrightPdfRenderer`:
+
+- shared Chromium browser
+- new isolated context/page per job
+- JavaScript disabled
+- non-`data:` / non-`about:blank` requests aborted
+- timeout + max HTML size
+- closed on worker shutdown
+
+Tests inject `FakePdfRenderer`.
+
+### Storage
+
+`LocalFilesystemStorage` stores objects under `LOCAL_STORAGE_PATH` using logical keys. Absolute filesystem paths are never returned by the API. Production should replace this with S3-compatible storage.
+
+### Email policy
+
+- Sent only when `emailTo` is set and `MAIL_ENABLED=true`
+- Runs after successful PDF storage
+- Failures set `email_status=failed` without regenerating the PDF
 
 ## HTTP API
 
-### Health
-
-| Method | Path | Description |
+| Method | Path | Notes |
 | --- | --- | --- |
-| `GET` | `/health` | Liveness (`X-API-Key` required) |
+| `GET` | `/health` | Auth required |
+| `GET/POST/PATCH/DELETE` | `/api/templates...` | CRUD + preview |
+| `GET/POST/PATCH/DELETE` | `/api/documents...` | Draft CRUD |
+| `POST` | `/api/documents/:id/generate` | `202` enqueue |
+| `POST` | `/api/documents/:id/retry` | failed only |
+| `GET` | `/api/documents/:id/status` | poll payload |
+| `GET` | `/api/documents/:id/download` | `application/pdf` |
+| `POST` | `/api/batches` | up to 10,000 items |
+| `GET` | `/api/batches/:id` | progress |
 
-### Templates
-
-| Method | Path | Description |
-| --- | --- | --- |
-| `GET` | `/api/templates` | Paginated list (`page`, `pageSize`, optional `search`) |
-| `POST` | `/api/templates` | Create (validates HTML, derives `variables`) |
-| `GET` | `/api/templates/:templateId` | Fetch one |
-| `PATCH` | `/api/templates/:templateId` | Update |
-| `DELETE` | `/api/templates/:templateId` | Delete (`409` if referenced) |
-| `POST` | `/api/templates/:templateId/preview` | Render HTML without persistence |
-
-### Documents
-
-| Method | Path | Description |
-| --- | --- | --- |
-| `GET` | `/api/documents` | Paginated list (`templateId`, `status` filters) |
-| `POST` | `/api/documents` | Create draft (requires all template variables) |
-| `GET` | `/api/documents/:documentId` | Fetch one |
-| `PATCH` | `/api/documents/:documentId` | Update draft only |
-| `DELETE` | `/api/documents/:documentId` | Delete when allowed |
-
-Clients cannot set `status`, `output_path`, error fields, or `generated_at`.
-
-### Examples
-
-Create a template:
+### cURL examples
 
 ```bash
-curl -s -X POST http://localhost:3000/api/templates \
+export API_KEY=development-api-key
+
+# generate
+curl -s -X POST "http://localhost:3000/api/documents/$DOCUMENT_ID/generate" \
+  -H "X-API-Key: $API_KEY"
+
+# status
+curl -s "http://localhost:3000/api/documents/$DOCUMENT_ID/status" \
+  -H "X-API-Key: $API_KEY"
+
+# retry
+curl -s -X POST "http://localhost:3000/api/documents/$DOCUMENT_ID/retry" \
+  -H "X-API-Key: $API_KEY"
+
+# download
+curl -s -OJ "http://localhost:3000/api/documents/$DOCUMENT_ID/download" \
+  -H "X-API-Key: $API_KEY"
+
+# batch (truncated example)
+curl -s -X POST http://localhost:3000/api/batches \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-    "name": "Diploma",
-    "description": "Course completion",
-    "html": "<h1>{{studentName}}</h1><p>{{course.title}}</p>"
-  }'
+  -d '{"templateId":"'"$TEMPLATE_ID"'","items":[{"variables":{"name":"Ada"}}]}'
+
+# batch progress
+curl -s "http://localhost:3000/api/batches/$BATCH_ID" \
+  -H "X-API-Key: $API_KEY"
 ```
 
-Preview (JSON body with escaped HTML in `html`):
+## Queues
 
-```bash
-curl -s -X POST http://localhost:3000/api/templates/$TEMPLATE_ID/preview \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "variables": {
-      "studentName": "Ada Lovelace",
-      "course": { "title": "Distributed Systems" }
-    }
-  }'
-```
+| Queue | Job name | Payload |
+| --- | --- | --- |
+| `certificate-jobs` | `generate-certificate` | `{ documentId }` |
+| `batch-dispatch` | `dispatch-batch` | `{ batchId }` |
 
-Create a draft document:
-
-```bash
-curl -s -X POST http://localhost:3000/api/documents \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "templateId": "'"$TEMPLATE_ID"'",
-    "variables": {
-      "studentName": "Ada Lovelace",
-      "course": { "title": "Distributed Systems" }
-    }
-  }'
-```
-
-## Rendering rules
-
-- Placeholders are extracted from the Handlebars AST (not regex-only).
-- Only simple escaped paths are allowed (`{{name}}`, `{{course.title}}`).
-- `{{{...}}}`, `{{& ...}}`, helpers, blocks, and partials are rejected.
-- Required placeholders must be present; extra variables are ignored.
-- Interpolation uses Handlebars HTML escaping (never `noEscape`).
-- Value handling: `undefined` → missing error; `null` → empty string; strings/numbers/booleans rendered as-is (escaped); nested objects supported for path segments; array/object leaves are JSON-stringified then escaped.
-- Preview does not create documents, enqueue jobs, or produce PDFs.
-- Preview is rate-limited (Redis-backed when Redis is available; otherwise in-memory per process).
-
-## Limits
-
-| Limit | Default |
-| --- | --- |
-| Template name | 200 chars |
-| Template description | 2,000 chars |
-| Template HTML | 100,000 chars |
-| Unique placeholders | 50 |
-| Document variables JSON | 32 KiB |
-| Page size | 1–100 (default 20) |
-| Preview rate limit | 30 / 60s |
+Default attempts: 3, exponential backoff 2s.
 
 ## Scripts
 
 ```bash
-pnpm db:generate
 pnpm db:migrate
 pnpm test
+pnpm test:load          # default LOAD_TEST_JOBS=10000
 pnpm typecheck
 pnpm lint
 pnpm build
 ```
 
-Integration tests use PostgreSQL database `certificates_test` by default (`TEST_DATABASE_URL` overrides).
+`pnpm test:load` pauses the certificate queue, measures bulk `202` latency, concurrent `/health` latency, persisted item counts, and dispatched job counts. It does not render 10,000 PDFs.
 
-## Local URLs
+### Measured locally (2026-07-21, MacBook Air, Docker Postgres/Redis)
 
-| Service | URL |
+| Metric | Value |
 | --- | --- |
-| API | http://localhost:3000 |
-| Web scaffold | http://localhost:5173 |
-| Mailpit | http://localhost:8025 |
+| `LOAD_TEST_JOBS` | 10000 |
+| Bulk endpoint | `202` in ~817 ms |
+| Concurrent `/health` | ~1 ms |
+| Batch items persisted | 10000 |
+| Jobs dispatched | 10000 |
+| Duplicates / lost | 0 / 0 |
+
+## Horizontal scaling
+
+Start multiple worker processes with the same Redis/Postgres configuration:
+
+```bash
+WORKER_CONCURRENCY=4 pnpm --filter @certificates/worker start
+```
+
+Workers share queues; atomic `queued → processing` prevents double generation.
+
+## Known limitations
+
+- Local filesystem storage is single-host
+- In-memory rate limiting is used if Redis is unavailable at API boot
+- Load test isolates enqueue/dispatch throughput from Chromium rendering
+- Operator UI is not implemented in this phase
