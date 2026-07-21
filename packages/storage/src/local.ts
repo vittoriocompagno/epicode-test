@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { DocumentStorage, PutDocumentInput, StoredDocument } from './types.js';
 
@@ -7,8 +7,8 @@ export type LocalFilesystemStorageOptions = {
 };
 
 /**
- * Minimal local filesystem adapter skeleton.
- * Object-storage adapters (S3/MinIO) are intentionally deferred.
+ * Local filesystem DocumentStorage adapter.
+ * Production deployments should swap this for S3-compatible object storage.
  */
 export class LocalFilesystemStorage implements DocumentStorage {
   private readonly rootDir: string;
@@ -20,7 +20,10 @@ export class LocalFilesystemStorage implements DocumentStorage {
   async put(input: PutDocumentInput): Promise<StoredDocument> {
     const absolutePath = this.resolveKey(input.key);
     await mkdir(path.dirname(absolutePath), { recursive: true });
-    await writeFile(absolutePath, input.body);
+
+    const temporaryPath = `${absolutePath}.${process.pid}.${Date.now()}.tmp`;
+    await writeFile(temporaryPath, input.body);
+    await rename(temporaryPath, absolutePath);
 
     return {
       key: input.key,
@@ -47,13 +50,27 @@ export class LocalFilesystemStorage implements DocumentStorage {
   }
 
   private resolveKey(key: string): string {
+    if (!key || key.includes('\0')) {
+      throw new Error('Invalid storage key');
+    }
+
     const normalized = path.normalize(key).replace(/^(\.\.(\/|\\|$))+/, '');
     const absolutePath = path.resolve(this.rootDir, normalized);
+    const rootWithSep = this.rootDir.endsWith(path.sep)
+      ? this.rootDir
+      : `${this.rootDir}${path.sep}`;
 
-    if (!absolutePath.startsWith(this.rootDir)) {
+    if (absolutePath !== this.rootDir && !absolutePath.startsWith(rootWithSep)) {
       throw new Error('Invalid storage key: path escapes storage root');
     }
 
     return absolutePath;
   }
+}
+
+export function documentPdfStorageKey(documentId: string): string {
+  if (!/^[0-9a-f-]{36}$/i.test(documentId)) {
+    throw new Error('Invalid document id for storage key');
+  }
+  return `documents/${documentId}.pdf`;
 }
