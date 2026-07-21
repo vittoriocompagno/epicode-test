@@ -6,7 +6,7 @@ import type {
   UpdateDocumentInput,
 } from '@certificates/contracts';
 import type { Database } from '@certificates/database';
-import { getByPath } from '@certificates/rendering';
+import { findMissingVariables } from '@certificates/rendering';
 import { AppError } from '../errors.js';
 import { DocumentRepository } from '../repositories/documents.js';
 import { TemplateRepository } from '../repositories/templates.js';
@@ -102,7 +102,7 @@ export class DocumentService {
     required: string[],
     variables: Record<string, unknown>,
   ): void {
-    const missing = required.filter((path) => getByPath(variables, path) === undefined);
+    const missing = findMissingVariables(required, variables);
     if (missing.length > 0) {
       throw new AppError(422, 'MISSING_VARIABLES', 'Document is missing required variables', {
         missing,

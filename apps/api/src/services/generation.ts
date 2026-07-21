@@ -1,10 +1,12 @@
 import type {
+  DocumentStatus,
   DocumentStatusResponse,
   GenerateAccepted,
 } from '@certificates/contracts';
-import type { Database } from '@certificates/database';
-import { getByPath } from '@certificates/rendering';
+import { markDocumentQueued, type Database } from '@certificates/database';
+import { findMissingVariables } from '@certificates/rendering';
 import {
+  certificateJobId,
   enqueueCertificateGeneration,
   type CertificateQueue,
 } from '@certificates/queue';
@@ -18,7 +20,7 @@ export class GenerationService {
   private readonly templates: TemplateRepository;
 
   constructor(
-    db: Database,
+    private readonly db: Database,
     private readonly certificateQueue: CertificateQueue,
     private readonly storage: DocumentStorage,
   ) {
@@ -27,81 +29,11 @@ export class GenerationService {
   }
 
   async generate(documentId: string): Promise<GenerateAccepted> {
-    const document = await this.requireDocument(documentId);
-    const template = await this.templates.findById(document.templateId);
-    if (!template) {
-      throw new AppError(404, 'TEMPLATE_NOT_FOUND', 'Template not found');
-    }
-
-    this.assertVariablesPresent(template.variables, document.variables);
-
-    if (document.status === 'completed') {
-      return {
-        documentId: document.id,
-        status: 'completed',
-        jobId: `generate-${document.id}`,
-      };
-    }
-
-    if (document.status === 'queued' || document.status === 'processing') {
-      return {
-        documentId: document.id,
-        status: document.status,
-        jobId: `generate-${document.id}`,
-      };
-    }
-
-    if (document.status !== 'draft' && document.status !== 'failed') {
-      throw new AppError(409, 'DOCUMENT_NOT_GENERATABLE', 'Document cannot be generated', {
-        status: document.status,
-      });
-    }
-
-    const queued = await this.documents.markQueued(document.id, ['draft', 'failed']);
-    if (!queued) {
-      const latest = await this.requireDocument(documentId);
-      return {
-        documentId: latest.id,
-        status: latest.status === 'completed' ? 'completed' : latest.status === 'processing' ? 'processing' : 'queued',
-        jobId: `generate-${latest.id}`,
-      };
-    }
-
-    await this.removeFinishedCertificateJob(document.id);
-    const jobId = await enqueueCertificateGeneration(this.certificateQueue, document.id);
-    return {
-      documentId: queued.id,
-      status: 'queued',
-      jobId,
-    };
+    return this.enqueue(documentId, ['draft', 'failed'], 'DOCUMENT_NOT_GENERATABLE');
   }
 
   async retry(documentId: string): Promise<GenerateAccepted> {
-    const document = await this.requireDocument(documentId);
-    if (document.status !== 'failed') {
-      throw new AppError(409, 'DOCUMENT_NOT_RETRYABLE', 'Only failed documents can be retried', {
-        status: document.status,
-      });
-    }
-
-    const template = await this.templates.findById(document.templateId);
-    if (!template) {
-      throw new AppError(404, 'TEMPLATE_NOT_FOUND', 'Template not found');
-    }
-    this.assertVariablesPresent(template.variables, document.variables);
-
-    const queued = await this.documents.markQueued(document.id, ['failed']);
-    if (!queued) {
-      throw new AppError(409, 'DOCUMENT_NOT_RETRYABLE', 'Document is no longer failed');
-    }
-
-    await this.removeFinishedCertificateJob(document.id);
-    const jobId = await enqueueCertificateGeneration(this.certificateQueue, document.id);
-    return {
-      documentId: queued.id,
-      status: 'queued',
-      jobId,
-    };
+    return this.enqueue(documentId, ['failed'], 'DOCUMENT_NOT_RETRYABLE');
   }
 
   async status(documentId: string): Promise<DocumentStatusResponse> {
@@ -141,8 +73,70 @@ export class GenerationService {
     };
   }
 
+  private async enqueue(
+    documentId: string,
+    allowedFrom: DocumentStatus[],
+    notAllowedCode: string,
+  ): Promise<GenerateAccepted> {
+    const document = await this.requireDocument(documentId);
+    const template = await this.templates.findById(document.templateId);
+    if (!template) {
+      throw new AppError(404, 'TEMPLATE_NOT_FOUND', 'Template not found');
+    }
+
+    this.assertVariablesPresent(template.variables, document.variables);
+
+    if (document.status === 'completed' || document.status === 'queued' || document.status === 'processing') {
+      if (allowedFrom.length === 1 && allowedFrom[0] === 'failed') {
+        throw new AppError(409, notAllowedCode, 'Only failed documents can be retried', {
+          status: document.status,
+        });
+      }
+      return this.snapshot(document.id, document.status);
+    }
+
+    if (!allowedFrom.includes(document.status)) {
+      throw new AppError(409, notAllowedCode, 'Document cannot be enqueued from current status', {
+        status: document.status,
+      });
+    }
+
+    const queued = await markDocumentQueued(this.db, document.id, allowedFrom);
+    if (!queued) {
+      const latest = await this.requireDocument(documentId);
+      if (allowedFrom.length === 1 && allowedFrom[0] === 'failed') {
+        throw new AppError(409, notAllowedCode, 'Document is no longer failed');
+      }
+      return this.snapshot(
+        latest.id,
+        latest.status === 'completed' || latest.status === 'processing' || latest.status === 'queued'
+          ? latest.status
+          : 'queued',
+      );
+    }
+
+    await this.removeFinishedCertificateJob(document.id);
+    const jobId = await enqueueCertificateGeneration(this.certificateQueue, document.id);
+    return {
+      documentId: queued.id,
+      status: 'queued',
+      jobId,
+    };
+  }
+
+  private snapshot(
+    documentId: string,
+    status: 'queued' | 'processing' | 'completed',
+  ): GenerateAccepted {
+    return {
+      documentId,
+      status,
+      jobId: certificateJobId(documentId),
+    };
+  }
+
   private async removeFinishedCertificateJob(documentId: string): Promise<void> {
-    const existing = await this.certificateQueue.getJob(`generate-${documentId}`);
+    const existing = await this.certificateQueue.getJob(certificateJobId(documentId));
     if (!existing) {
       return;
     }
@@ -164,7 +158,7 @@ export class GenerationService {
     required: string[],
     variables: Record<string, unknown>,
   ): void {
-    const missing = required.filter((path) => getByPath(variables, path) === undefined);
+    const missing = findMissingVariables(required, variables);
     if (missing.length > 0) {
       throw new AppError(422, 'MISSING_VARIABLES', 'Document is missing required variables', {
         missing,

@@ -147,6 +147,22 @@ paths:
       responses:
         '204':
           description: Deleted
+  /api/templates/preview:
+    post:
+      summary: Side-effect-free HTML preview (unsaved template)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [html]
+              properties:
+                html: { type: string }
+                variables: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Rendered HTML
   /api/templates/{templateId}/preview:
     post:
       summary: Non-persistent HTML preview

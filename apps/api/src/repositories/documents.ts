@@ -5,7 +5,7 @@ import type {
   UpdateDocumentInput,
 } from '@certificates/contracts';
 import { documents, type Database } from '@certificates/database';
-import { and, count, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, count, desc, eq, inArray } from 'drizzle-orm';
 import { AppError } from '../errors.js';
 
 function toDocumentResponse(row: typeof documents.$inferSelect): DocumentResponse {
@@ -136,79 +136,6 @@ export class DocumentRepository {
       .returning();
 
     return row ? toDocumentResponse(row) : null;
-  }
-
-  /**
-   * Atomic ownership claim: only one worker can move queued → processing.
-   */
-  async claimForProcessing(id: string): Promise<DocumentResponse | null> {
-    const [row] = await this.db
-      .update(documents)
-      .set({
-        status: 'processing',
-        attemptCount: sql`${documents.attemptCount} + 1`,
-        updatedAt: new Date(),
-      })
-      .where(and(eq(documents.id, id), eq(documents.status, 'queued')))
-      .returning();
-
-    return row ? toDocumentResponse(row) : null;
-  }
-
-  async markCompleted(
-    id: string,
-    input: { outputPath: string },
-  ): Promise<DocumentResponse | null> {
-    const [row] = await this.db
-      .update(documents)
-      .set({
-        status: 'completed',
-        outputPath: input.outputPath,
-        errorCode: null,
-        errorMessage: null,
-        generatedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(and(eq(documents.id, id), eq(documents.status, 'processing')))
-      .returning();
-
-    return row ? toDocumentResponse(row) : null;
-  }
-
-  async markFailed(
-    id: string,
-    input: { errorCode: string; errorMessage: string },
-  ): Promise<DocumentResponse | null> {
-    const [row] = await this.db
-      .update(documents)
-      .set({
-        status: 'failed',
-        errorCode: input.errorCode,
-        errorMessage: input.errorMessage,
-        updatedAt: new Date(),
-      })
-      .where(eq(documents.id, id))
-      .returning();
-
-    return row ? toDocumentResponse(row) : null;
-  }
-
-  async markEmailResult(
-    id: string,
-    input:
-      | { status: 'sent' }
-      | { status: 'failed'; error: string }
-      | { status: 'skipped' },
-  ): Promise<void> {
-    await this.db
-      .update(documents)
-      .set({
-        emailStatus: input.status,
-        emailError: input.status === 'failed' ? input.error : null,
-        emailedAt: input.status === 'sent' ? new Date() : null,
-        updatedAt: new Date(),
-      })
-      .where(eq(documents.id, id));
   }
 
   async delete(id: string): Promise<boolean> {

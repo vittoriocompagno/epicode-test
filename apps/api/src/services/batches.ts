@@ -1,50 +1,47 @@
-import {
-  CreateBatchSchema,
-  type BatchAccepted,
-  type BatchListQuery,
-  type BatchStatusResponse,
-  type CreateBatchInput,
-  type PaginatedBatches,
+import type {
+  BatchAccepted,
+  BatchListQuery,
+  BatchStatusResponse,
+  CreateBatchInput,
+  PaginatedBatches,
 } from '@certificates/contracts';
 import {
   batchItems,
+  documents,
   generationBatches,
+  summarizeBatch,
+  summarizeBatches,
+  deriveBatchStatus,
   type Database,
 } from '@certificates/database';
-import { getByPath } from '@certificates/rendering';
+import { findMissingVariables } from '@certificates/rendering';
 import {
   enqueueBatchDispatch,
   type BatchDispatchQueue,
 } from '@certificates/queue';
-import { count, desc, eq } from 'drizzle-orm';
+import { count, desc } from 'drizzle-orm';
 import { AppError } from '../errors.js';
-import { DocumentRepository } from '../repositories/documents.js';
 import { TemplateRepository } from '../repositories/templates.js';
 
 export class BatchService {
-  private readonly documents: DocumentRepository;
   private readonly templates: TemplateRepository;
 
   constructor(
     private readonly db: Database,
     private readonly batchDispatchQueue: BatchDispatchQueue,
   ) {
-    this.documents = new DocumentRepository(db);
     this.templates = new TemplateRepository(db);
   }
 
   async create(input: CreateBatchInput): Promise<BatchAccepted> {
-    const parsed = CreateBatchSchema.parse(input);
-    const template = await this.templates.findById(parsed.templateId);
+    const template = await this.templates.findById(input.templateId);
     if (!template) {
       throw new AppError(404, 'TEMPLATE_NOT_FOUND', 'Template not found');
     }
 
     const itemErrors: Array<{ index: number; missing: string[] }> = [];
-    for (const [index, item] of parsed.items.entries()) {
-      const missing = template.variables.filter(
-        (path) => getByPath(item.variables, path) === undefined,
-      );
+    for (const [index, item] of input.items.entries()) {
+      const missing = findMissingVariables(template.variables, item.variables);
       if (missing.length > 0) {
         itemErrors.push({ index, missing });
       }
@@ -57,46 +54,66 @@ export class BatchService {
       });
     }
 
-    const [batch] = await this.db
-      .insert(generationBatches)
-      .values({
-        templateId: parsed.templateId,
-        status: 'queued',
-        totalCount: parsed.items.length,
-        emailTo: parsed.emailTo ?? null,
-      })
-      .returning();
+    const batchId = await this.db.transaction(async (tx) => {
+      const [batch] = await tx
+        .insert(generationBatches)
+        .values({
+          templateId: input.templateId,
+          status: 'queued',
+          totalCount: input.items.length,
+          emailTo: input.emailTo ?? null,
+        })
+        .returning();
 
-    if (!batch) {
-      throw new AppError(500, 'INTERNAL_ERROR', 'Failed to create batch');
-    }
+      if (!batch) {
+        throw new AppError(500, 'INTERNAL_ERROR', 'Failed to create batch');
+      }
 
-    const createdDocuments = await this.documents.createMany(
-      parsed.items.map((item) => ({
-        templateId: parsed.templateId,
-        variables: item.variables,
-        emailTo: item.emailTo ?? parsed.emailTo ?? null,
-      })),
-    );
+      const createdDocuments = await tx
+        .insert(documents)
+        .values(
+          input.items.map((item) => ({
+            templateId: input.templateId,
+            variables: item.variables,
+            status: 'draft' as const,
+            emailTo: item.emailTo ?? input.emailTo ?? null,
+            emailStatus: (item.emailTo ?? input.emailTo)
+              ? ('pending' as const)
+              : ('skipped' as const),
+          })),
+        )
+        .returning();
 
-    const chunkSize = 500;
-    for (let offset = 0; offset < createdDocuments.length; offset += chunkSize) {
-      const slice = createdDocuments.slice(offset, offset + chunkSize);
-      await this.db.insert(batchItems).values(
-        slice.map((document) => ({
-          batchId: batch.id,
-          documentId: document.id,
-          status: 'pending' as const,
-        })),
+      const chunkSize = 500;
+      for (let offset = 0; offset < createdDocuments.length; offset += chunkSize) {
+        const slice = createdDocuments.slice(offset, offset + chunkSize);
+        await tx.insert(batchItems).values(
+          slice.map((document) => ({
+            batchId: batch.id,
+            documentId: document.id,
+            status: 'pending' as const,
+          })),
+        );
+      }
+
+      return batch.id;
+    });
+
+    try {
+      await enqueueBatchDispatch(this.batchDispatchQueue, batchId);
+    } catch (error) {
+      throw new AppError(
+        503,
+        'QUEUE_UNAVAILABLE',
+        'Batch was persisted but dispatch could not be enqueued',
+        { batchId, cause: error instanceof Error ? error.message : 'unknown' },
       );
     }
 
-    await enqueueBatchDispatch(this.batchDispatchQueue, batch.id);
-
     return {
-      batchId: batch.id,
+      batchId,
       status: 'queued',
-      total: batch.totalCount,
+      total: input.items.length,
     };
   }
 
@@ -112,7 +129,28 @@ export class BatchService {
       .limit(query.pageSize)
       .offset(offset);
 
-    const items = await Promise.all(rows.map((row) => this.get(row.id)));
+    const countsByBatch = await summarizeBatches(
+      this.db,
+      rows.map((row) => row.id),
+    );
+
+    const items: BatchStatusResponse[] = rows.map((batch) => {
+      const counts = countsByBatch.get(batch.id) ?? {
+        pending: 0,
+        queued: 0,
+        processing: 0,
+        completed: 0,
+        failed: 0,
+      };
+      return {
+        id: batch.id,
+        status: deriveBatchStatus(counts, batch.totalCount),
+        total: batch.totalCount,
+        ...counts,
+        createdAt: batch.createdAt.toISOString(),
+        completedAt: batch.completedAt ? batch.completedAt.toISOString() : null,
+      };
+    });
 
     return {
       items,
@@ -124,41 +162,22 @@ export class BatchService {
   }
 
   async get(batchId: string): Promise<BatchStatusResponse> {
-    const [batch] = await this.db
-      .select()
-      .from(generationBatches)
-      .where(eq(generationBatches.id, batchId))
-      .limit(1);
-
-    if (!batch) {
+    const progress = await summarizeBatch(this.db, batchId);
+    if (!progress) {
       throw new AppError(404, 'BATCH_NOT_FOUND', 'Batch not found');
     }
 
-    const counts = await this.db
-      .select({
-        status: batchItems.status,
-        value: count(),
-      })
-      .from(batchItems)
-      .where(eq(batchItems.batchId, batchId))
-      .groupBy(batchItems.status);
-
-    const byStatus = Object.fromEntries(counts.map((row) => [row.status, Number(row.value)])) as Record<
-      string,
-      number
-    >;
-
     return {
-      id: batch.id,
-      status: batch.status,
-      total: batch.totalCount,
-      pending: byStatus.pending ?? 0,
-      queued: byStatus.queued ?? 0,
-      processing: byStatus.processing ?? 0,
-      completed: byStatus.completed ?? 0,
-      failed: byStatus.failed ?? 0,
-      createdAt: batch.createdAt.toISOString(),
-      completedAt: batch.completedAt ? batch.completedAt.toISOString() : null,
+      id: progress.id,
+      status: progress.status,
+      total: progress.total,
+      pending: progress.pending,
+      queued: progress.queued,
+      processing: progress.processing,
+      completed: progress.completed,
+      failed: progress.failed,
+      createdAt: progress.createdAt.toISOString(),
+      completedAt: progress.completedAt ? progress.completedAt.toISOString() : null,
     };
   }
 }

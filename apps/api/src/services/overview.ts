@@ -1,20 +1,16 @@
 import type { OverviewResponse } from '@certificates/contracts';
 import {
-  batchItems,
   documents,
   generationBatches,
+  summarizeBatches,
+  deriveBatchStatus,
   templates,
   type Database,
 } from '@certificates/database';
-import { count, desc, eq, sql } from 'drizzle-orm';
-import { DocumentRepository } from '../repositories/documents.js';
+import { count, desc } from 'drizzle-orm';
 
 export class OverviewService {
-  private readonly documents: DocumentRepository;
-
-  constructor(private readonly db: Database) {
-    this.documents = new DocumentRepository(db);
-  }
+  constructor(private readonly db: Database) {}
 
   async get(): Promise<OverviewResponse> {
     const [templateCount] = await this.db.select({ value: count() }).from(templates);
@@ -31,7 +27,11 @@ export class OverviewService {
       statusCounts.map((row) => [row.status, Number(row.value)]),
     ) as Record<string, number>;
 
-    const recentDocuments = await this.documents.list({ page: 1, pageSize: 8 });
+    const recentDocumentRows = await this.db
+      .select()
+      .from(documents)
+      .orderBy(desc(documents.createdAt))
+      .limit(8);
 
     const recentBatchRows = await this.db
       .select()
@@ -39,34 +39,9 @@ export class OverviewService {
       .orderBy(desc(generationBatches.createdAt))
       .limit(5);
 
-    const recentBatches = await Promise.all(
-      recentBatchRows.map(async (batch) => {
-        const itemCounts = await this.db
-          .select({
-            status: batchItems.status,
-            value: count(),
-          })
-          .from(batchItems)
-          .where(eq(batchItems.batchId, batch.id))
-          .groupBy(batchItems.status);
-
-        const itemsByStatus = Object.fromEntries(
-          itemCounts.map((row) => [row.status, Number(row.value)]),
-        ) as Record<string, number>;
-
-        return {
-          id: batch.id,
-          status: batch.status,
-          total: batch.totalCount,
-          pending: itemsByStatus.pending ?? 0,
-          queued: itemsByStatus.queued ?? 0,
-          processing: itemsByStatus.processing ?? 0,
-          completed: itemsByStatus.completed ?? 0,
-          failed: itemsByStatus.failed ?? 0,
-          createdAt: batch.createdAt.toISOString(),
-          completedAt: batch.completedAt ? batch.completedAt.toISOString() : null,
-        };
-      }),
+    const countsByBatch = await summarizeBatches(
+      this.db,
+      recentBatchRows.map((row) => row.id),
     );
 
     return {
@@ -83,11 +58,40 @@ export class OverviewService {
         completed: byStatus.completed ?? 0,
         failed: byStatus.failed ?? 0,
       },
-      recentDocuments: recentDocuments.items,
-      recentBatches,
+      recentDocuments: recentDocumentRows.map((row) => ({
+        id: row.id,
+        templateId: row.templateId,
+        variables: row.variables,
+        status: row.status,
+        outputPath: row.outputPath,
+        errorCode: row.errorCode,
+        errorMessage: row.errorMessage,
+        attemptCount: row.attemptCount,
+        emailTo: row.emailTo,
+        emailStatus: row.emailStatus,
+        emailError: row.emailError,
+        emailedAt: row.emailedAt ? row.emailedAt.toISOString() : null,
+        createdAt: row.createdAt.toISOString(),
+        updatedAt: row.updatedAt.toISOString(),
+        generatedAt: row.generatedAt ? row.generatedAt.toISOString() : null,
+      })),
+      recentBatches: recentBatchRows.map((batch) => {
+        const counts = countsByBatch.get(batch.id) ?? {
+          pending: 0,
+          queued: 0,
+          processing: 0,
+          completed: 0,
+          failed: 0,
+        };
+        return {
+          id: batch.id,
+          status: deriveBatchStatus(counts, batch.totalCount),
+          total: batch.totalCount,
+          ...counts,
+          createdAt: batch.createdAt.toISOString(),
+          completedAt: batch.completedAt ? batch.completedAt.toISOString() : null,
+        };
+      }),
     };
   }
 }
-
-// Keep drizzle `sql` import available for future aggregate tweaks without unused-import churn.
-void sql;

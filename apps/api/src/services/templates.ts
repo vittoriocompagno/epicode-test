@@ -1,4 +1,5 @@
 import type {
+  AdHocPreviewRequest,
   CreateTemplateInput,
   PaginatedTemplates,
   PreviewRequest,
@@ -78,7 +79,20 @@ export class TemplateService {
 
   async preview(id: string, input: PreviewRequest): Promise<PreviewResponse> {
     const template = await this.get(id);
-    const rendered = renderTemplate(template.html, input.variables);
+    return this.renderPreview(template.html, input.variables, template.variables);
+  }
+
+  async previewAdHoc(input: AdHocPreviewRequest): Promise<PreviewResponse> {
+    const variables = this.assertValidTemplate(input.html);
+    return this.renderPreview(input.html, input.variables, variables);
+  }
+
+  private renderPreview(
+    html: string,
+    variables: Record<string, unknown>,
+    detected: string[],
+  ): PreviewResponse {
+    const rendered = renderTemplate(html, variables);
     if (!rendered.ok) {
       if (rendered.code === 'MISSING_VARIABLES') {
         throw new AppError(422, 'MISSING_VARIABLES', rendered.message, rendered.details ?? {});
@@ -88,7 +102,7 @@ export class TemplateService {
 
     return {
       html: rendered.html,
-      variables: template.variables,
+      variables: detected,
     };
   }
 

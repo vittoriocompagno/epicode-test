@@ -145,7 +145,7 @@ X-API-Key: development-api-key
 
 ## Bulk generation
 
-`POST /api/batches` inserts documents/items in bulk, enqueues one `dispatch-batch` job, returns 202. Dispatcher chunks (default 500) with `addBulk`. Progress on `GET /api/batches/:id` is computed from `batch_items` statuses.
+`POST /api/batches` inserts documents/items in bulk, enqueues one `dispatch-batch` job, returns 202. Dispatcher chunks (default 500) with `addBulk`. Progress on `GET /api/batches/:id` is **derived from document statuses** (`batch_items` is a join table, not a second status machine).
 
 ## Security decisions
 

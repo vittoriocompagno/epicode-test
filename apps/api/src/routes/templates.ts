@@ -1,4 +1,5 @@
 import {
+  AdHocPreviewRequestSchema,
   CreateTemplateSchema,
   PreviewRequestSchema,
   TemplateListQuerySchema,
@@ -26,6 +27,23 @@ const templateRoutes: FastifyPluginAsync<{ env: Env }> = async (app, opts) => {
       const body = parseWithSchema(CreateTemplateSchema, request.body);
       const created = await service.create(body);
       return reply.code(201).send(created);
+    },
+  );
+
+  app.post(
+    '/api/templates/preview',
+    {
+      bodyLimit: opts.env.PREVIEW_BODY_LIMIT_BYTES,
+      config: {
+        rateLimit: {
+          max: opts.env.PREVIEW_RATE_LIMIT_MAX,
+          timeWindow: opts.env.PREVIEW_RATE_LIMIT_WINDOW_MS,
+        },
+      },
+    },
+    async (request) => {
+      const body = parseWithSchema(AdHocPreviewRequestSchema, request.body);
+      return service.previewAdHoc(body);
     },
   );
 
