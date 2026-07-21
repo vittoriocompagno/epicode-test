@@ -15,7 +15,7 @@ import {
 import type { DispatchBatchJob, GenerateCertificateJob } from '@certificates/contracts';
 import { PlaywrightPdfRenderer } from '@certificates/rendering';
 import { LocalFilesystemStorage } from '@certificates/storage';
-import { createWorkerCertificateQueue, dispatchBatch } from './dispatch.js';
+import { createCertificateQueue, dispatchBatch } from './dispatch.js';
 import { generateCertificateDocument } from './generate.js';
 import { loadEnv } from './env.js';
 
@@ -27,9 +27,9 @@ const logger = pino({
 async function bootstrap(): Promise<void> {
   const database = createDatabaseClient(env.DATABASE_URL);
   const storage = new LocalFilesystemStorage({ rootDir: env.LOCAL_STORAGE_PATH });
-  const pdfRenderer = new PlaywrightPdfRenderer();
+  const pdfRenderer = new PlaywrightPdfRenderer({ timeoutMs: env.PDF_TIMEOUT_MS });
   const redis = createRedisConnection(env.REDIS_URL, true);
-  const certificateQueue = createWorkerCertificateQueue(env.REDIS_URL);
+  const certificateQueue = createCertificateQueue(env.REDIS_URL);
   const maxAttempts = defaultJobOptions.attempts;
 
   const mailer = env.MAIL_ENABLED

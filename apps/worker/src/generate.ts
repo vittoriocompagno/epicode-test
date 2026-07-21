@@ -1,13 +1,17 @@
 import {
   batchItems,
+  claimDocumentForProcessing,
   documents,
-  generationBatches,
+  markDocumentCompleted,
+  markDocumentFailed,
+  persistDerivedBatchStatus,
+  requeueDocumentAfterTransientFailure,
   templates,
   type Database,
 } from '@certificates/database';
 import { documentPdfStorageKey, type DocumentStorage } from '@certificates/storage';
 import { renderTemplate, type PdfRenderer } from '@certificates/rendering';
-import { and, count, eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import type { Transporter } from 'nodemailer';
 import type { Logger } from 'pino';
 
@@ -41,10 +45,11 @@ export async function generateCertificateDocument(
 
   if (document.status === 'completed') {
     deps.logger.info({ documentId }, 'document already completed; no-op');
+    await persistDerivedBatchStatusForDocument(deps.db, documentId);
     return;
   }
 
-  const claimed = await claimProcessing(deps.db, documentId);
+  const claimed = await claimDocumentForProcessing(deps.db, documentId);
   if (!claimed) {
     const [latest] = await deps.db
       .select()
@@ -54,13 +59,12 @@ export async function generateCertificateDocument(
 
     if (latest?.status === 'completed') {
       deps.logger.info({ documentId }, 'lost claim because document completed');
+      await persistDerivedBatchStatusForDocument(deps.db, documentId);
       return;
     }
 
     throw new Error(`Unable to claim document ${documentId} for processing`);
   }
-
-  await syncBatchItemStatus(deps.db, documentId, 'processing');
 
   try {
     const [template] = await deps.db
@@ -90,20 +94,13 @@ export async function generateCertificateDocument(
       contentType: 'application/pdf',
     });
 
-    await deps.db
-      .update(documents)
-      .set({
-        status: 'completed',
-        outputPath: storageKey,
-        errorCode: null,
-        errorMessage: null,
-        generatedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(and(eq(documents.id, documentId), eq(documents.status, 'processing')));
+    const completed = await markDocumentCompleted(deps.db, documentId, storageKey);
+    if (!completed) {
+      await deps.storage.delete(storageKey).catch(() => undefined);
+      throw new Error(`Document ${documentId} was not in processing state when completing`);
+    }
 
-    await syncBatchItemStatus(deps.db, documentId, 'completed');
-    await maybeRefreshBatch(deps.db, documentId);
+    await persistDerivedBatchStatusForDocument(deps.db, documentId);
 
     if (claimed.emailTo && deps.mailer) {
       try {
@@ -153,60 +150,20 @@ export async function generateCertificateDocument(
 
     const isFinalAttempt = attempt >= maxAttempts;
     if (isFinalAttempt) {
-      await deps.db
-        .update(documents)
-        .set({
-          status: 'failed',
-          errorCode: 'GENERATION_FAILED',
-          errorMessage: message.slice(0, 500),
-          updatedAt: new Date(),
-        })
-        .where(eq(documents.id, documentId));
-
-      await syncBatchItemStatus(deps.db, documentId, 'failed');
-      await maybeRefreshBatch(deps.db, documentId);
+      await markDocumentFailed(deps.db, documentId, {
+        code: 'GENERATION_FAILED',
+        message,
+      });
+      await persistDerivedBatchStatusForDocument(deps.db, documentId);
     } else {
-      // Return to queued so the next BullMQ attempt can reclaim atomically.
-      await deps.db
-        .update(documents)
-        .set({
-          status: 'queued',
-          updatedAt: new Date(),
-        })
-        .where(eq(documents.id, documentId));
-      await syncBatchItemStatus(deps.db, documentId, 'queued');
+      await requeueDocumentAfterTransientFailure(deps.db, documentId);
     }
 
     throw error;
   }
 }
 
-async function claimProcessing(db: Database, documentId: string) {
-  const [row] = await db
-    .update(documents)
-    .set({
-      status: 'processing',
-      attemptCount: sql`${documents.attemptCount} + 1`,
-      updatedAt: new Date(),
-    })
-    .where(and(eq(documents.id, documentId), eq(documents.status, 'queued')))
-    .returning();
-
-  return row ?? null;
-}
-
-async function syncBatchItemStatus(
-  db: Database,
-  documentId: string,
-  status: 'queued' | 'processing' | 'completed' | 'failed',
-): Promise<void> {
-  await db
-    .update(batchItems)
-    .set({ status, updatedAt: new Date() })
-    .where(eq(batchItems.documentId, documentId));
-}
-
-async function maybeRefreshBatch(db: Database, documentId: string): Promise<void> {
+async function persistDerivedBatchStatusForDocument(db: Database, documentId: string): Promise<void> {
   const [item] = await db
     .select()
     .from(batchItems)
@@ -217,43 +174,5 @@ async function maybeRefreshBatch(db: Database, documentId: string): Promise<void
     return;
   }
 
-  await refreshBatchStatus(db, item.batchId);
-}
-
-export async function refreshBatchStatus(db: Database, batchId: string): Promise<void> {
-  const counts = await db
-    .select({
-      status: batchItems.status,
-      value: count(),
-    })
-    .from(batchItems)
-    .where(eq(batchItems.batchId, batchId))
-    .groupBy(batchItems.status);
-
-  const byStatus = Object.fromEntries(
-    counts.map((row) => [row.status, Number(row.value)]),
-  ) as Record<string, number>;
-
-  const pending = byStatus.pending ?? 0;
-  const queued = byStatus.queued ?? 0;
-  const processing = byStatus.processing ?? 0;
-  const completed = byStatus.completed ?? 0;
-  const failed = byStatus.failed ?? 0;
-  const total = pending + queued + processing + completed + failed;
-
-  let status: 'queued' | 'processing' | 'completed' | 'failed' = 'queued';
-  if (total > 0 && completed + failed === total) {
-    status = failed === total ? 'failed' : 'completed';
-  } else if (total > 0 && pending < total) {
-    status = 'processing';
-  }
-
-  await db
-    .update(generationBatches)
-    .set({
-      status,
-      updatedAt: new Date(),
-      completedAt: status === 'completed' || status === 'failed' ? new Date() : null,
-    })
-    .where(eq(generationBatches.id, batchId));
+  await persistDerivedBatchStatus(db, item.batchId);
 }

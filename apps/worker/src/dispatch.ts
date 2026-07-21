@@ -1,4 +1,10 @@
-import { batchItems, documents, type Database } from '@certificates/database';
+import {
+  batchItems,
+  documents,
+  markDocumentsQueued,
+  persistDerivedBatchStatus,
+  type Database,
+} from '@certificates/database';
 import {
   certificateJobId,
   createCertificateQueue,
@@ -6,8 +12,12 @@ import {
 } from '@certificates/queue';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { Logger } from 'pino';
-import { refreshBatchStatus } from './generate.js';
 
+/**
+ * Dispatch pending (draft) batch documents.
+ * Order: enqueue jobs first, then mark documents queued — so a crash after Redis
+ * still leaves runnable jobs; a crash before Redis leaves drafts for restart.
+ */
 export async function dispatchBatch(
   batchId: string,
   deps: {
@@ -23,29 +33,19 @@ export async function dispatchBatch(
 
   for (;;) {
     const pending = await deps.db
-      .select()
+      .select({
+        itemId: batchItems.id,
+        documentId: batchItems.documentId,
+      })
       .from(batchItems)
-      .where(and(eq(batchItems.batchId, batchId), eq(batchItems.status, 'pending')))
+      .innerJoin(documents, eq(documents.id, batchItems.documentId))
+      .where(and(eq(batchItems.batchId, batchId), eq(documents.status, 'draft')))
       .orderBy(asc(batchItems.createdAt), asc(batchItems.id))
       .limit(deps.chunkSize);
 
     if (pending.length === 0) {
       break;
     }
-
-    const documentIds = pending.map((item) => item.documentId);
-
-    await deps.db
-      .update(documents)
-      .set({
-        status: 'queued',
-        errorCode: null,
-        errorMessage: null,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(inArray(documents.id, documentIds), inArray(documents.status, ['draft', 'failed'])),
-      );
 
     const jobs = pending.map((item) => ({
       name: 'generate-certificate' as const,
@@ -57,6 +57,10 @@ export async function dispatchBatch(
 
     await deps.certificateQueue.addBulk(jobs);
 
+    const documentIds = pending.map((item) => item.documentId);
+    await markDocumentsQueued(deps.db, documentIds, ['draft']);
+
+    // Keep batch_items.status loosely aligned for older rows; source of truth is documents.
     await deps.db
       .update(batchItems)
       .set({
@@ -68,7 +72,7 @@ export async function dispatchBatch(
           eq(batchItems.batchId, batchId),
           inArray(
             batchItems.id,
-            pending.map((item) => item.id),
+            pending.map((item) => item.itemId),
           ),
         ),
       );
@@ -80,10 +84,8 @@ export async function dispatchBatch(
     );
   }
 
-  await refreshBatchStatus(deps.db, batchId);
+  await persistDerivedBatchStatus(deps.db, batchId);
   deps.logger.info({ batchId, dispatched }, 'batch dispatch completed');
 }
 
-export function createWorkerCertificateQueue(redisUrl: string): CertificateQueue {
-  return createCertificateQueue(redisUrl);
-}
+export { createCertificateQueue };
