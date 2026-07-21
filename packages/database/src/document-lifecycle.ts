@@ -1,6 +1,6 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, exists, inArray, or, sql } from 'drizzle-orm';
 import type { Database } from './client.js';
-import { documents } from './schema.js';
+import { batchItems, documents } from './schema.js';
 
 export type DocumentStatus = (typeof documents.status.enumValues)[number];
 export type DocumentRow = typeof documents.$inferSelect;
@@ -11,6 +11,11 @@ export async function claimDocumentForProcessing(
   db: Database,
   documentId: string,
 ): Promise<DocumentRow | null> {
+  const belongsToBatch = db
+    .select({ id: batchItems.id })
+    .from(batchItems)
+    .where(eq(batchItems.documentId, documents.id));
+
   const [row] = await db
     .update(documents)
     .set({
@@ -18,7 +23,15 @@ export async function claimDocumentForProcessing(
       attemptCount: sql`${documents.attemptCount} + 1`,
       updatedAt: new Date(),
     })
-    .where(and(eq(documents.id, documentId), eq(documents.status, 'queued')))
+    .where(
+      and(
+        eq(documents.id, documentId),
+        or(
+          eq(documents.status, 'queued'),
+          and(eq(documents.status, 'draft'), exists(belongsToBatch)),
+        ),
+      ),
+    )
     .returning();
 
   return row ?? null;
