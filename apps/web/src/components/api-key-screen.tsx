@@ -6,14 +6,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useApiKey } from '@/hooks/use-api-key';
-import { clearApiKey } from '@/lib/auth';
+import { setApiKey, setVerifying } from '@/lib/auth';
 import { ApiClientError, api } from '@/lib/api';
 
 export function ApiKeyScreen() {
-  const { setApiKey } = useApiKey();
+  const { authState } = useApiKey();
   const [value, setValue] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const isSubmitting = authState === 'verifying';
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -23,22 +24,19 @@ export function ApiKeyScreen() {
       return;
     }
 
-    setIsSubmitting(true);
     setError(null);
-    setApiKey(trimmed);
+    setVerifying(true);
 
     try {
-      await api.getHealth();
+      await api.verifyApiKey(trimmed);
+      setApiKey(trimmed);
     } catch (err) {
-      clearApiKey();
       const message =
         err instanceof ApiClientError ? err.message : 'Unable to verify API key.';
       setError(message);
-      setIsSubmitting(false);
-      return;
+    } finally {
+      setVerifying(false);
     }
-
-    setIsSubmitting(false);
   }
 
   return (

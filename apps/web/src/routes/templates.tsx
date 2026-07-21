@@ -1,6 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { EyeIcon, FileCodeIcon, PlusIcon, SparklesIcon, Trash2Icon } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog';
+import { JsonObjectField } from '@/components/json-object-field';
 import { QueryState } from '@/components/query-state';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -26,13 +28,14 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   useCreateTemplate,
   useDeleteTemplate,
-  usePreviewTemplate,
+  usePreviewAdHoc,
   useTemplates,
   useUpdateTemplate,
 } from '@/hooks/queries';
 import type { TemplateResponse } from '@certificates/contracts';
 import { EXAMPLE_CERTIFICATE_HTML, EXAMPLE_TEMPLATE_VARIABLES } from '@/lib/examples';
 import { formatDateTime, formatShortId } from '@/lib/format';
+import { parseVariables } from '@/lib/validation';
 
 export const Route = createFileRoute('/templates')({
   component: TemplatesPage,
@@ -52,12 +55,20 @@ const emptyForm: TemplateFormState = {
   variablesJson: JSON.stringify(EXAMPLE_TEMPLATE_VARIABLES, null, 2),
 };
 
+function variablesFromTemplate(variables: string[]): string {
+  return JSON.stringify(
+    Object.fromEntries(variables.map((variable) => [variable, ''])),
+    null,
+    2,
+  );
+}
+
 function TemplatesPage() {
   const templates = useTemplates({ page: 1, pageSize: 100 });
   const createTemplate = useCreateTemplate();
   const updateTemplate = useUpdateTemplate();
   const deleteTemplate = useDeleteTemplate();
-  const previewTemplate = usePreviewTemplate();
+  const previewAdHoc = usePreviewAdHoc();
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -85,7 +96,7 @@ function TemplatesPage() {
       name: template.name,
       description: template.description ?? '',
       html: template.html,
-      variablesJson: JSON.stringify(EXAMPLE_TEMPLATE_VARIABLES, null, 2),
+      variablesJson: variablesFromTemplate(template.variables),
     });
     setFormError(null);
     setEditorOpen(true);
@@ -106,20 +117,6 @@ function TemplatesPage() {
     }));
   }
 
-  function parseVariables(): Record<string, unknown> | null {
-    try {
-      const parsed: unknown = JSON.parse(form.variablesJson);
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        setFormError('Variables must be a JSON object.');
-        return null;
-      }
-      return parsed as Record<string, unknown>;
-    } catch {
-      setFormError('Variables JSON is invalid.');
-      return null;
-    }
-  }
-
   async function handleSave() {
     setFormError(null);
     if (!form.name.trim() || !form.html.trim()) {
@@ -133,57 +130,51 @@ function TemplatesPage() {
       html: form.html,
     };
 
-    if (selected) {
-      await updateTemplate.mutateAsync({ id: selected.id, body: payload });
-    } else {
-      await createTemplate.mutateAsync(payload);
+    try {
+      if (selected) {
+        await updateTemplate.mutateAsync({ id: selected.id, body: payload });
+      } else {
+        await createTemplate.mutateAsync(payload);
+      }
+      setEditorOpen(false);
+    } catch {
+      // Error surfaced by mutation onError
     }
-    setEditorOpen(false);
   }
 
   async function handlePreview() {
     setFormError(null);
-    const variables = parseVariables();
-    if (!variables) return;
-    if (!form.name.trim() || !form.html.trim()) {
-      setFormError('Name and HTML are required before preview.');
+    const parsed = parseVariables(form.variablesJson);
+    if (!parsed.ok) {
+      setFormError(parsed.error);
+      return;
+    }
+    if (!form.html.trim()) {
+      setFormError('HTML is required before preview.');
       return;
     }
 
-    // Always preview through the API so Handlebars escaping matches production.
-    let templateId = selected?.id;
-    if (!templateId) {
-      const created = await createTemplate.mutateAsync({
-        name: form.name.trim(),
-        description: form.description.trim() ? form.description.trim() : null,
+    try {
+      const result = await previewAdHoc.mutateAsync({
         html: form.html,
+        variables: parsed.data,
       });
-      templateId = created.id;
-      setSelected(created);
-    } else {
-      await updateTemplate.mutateAsync({
-        id: templateId,
-        body: {
-          name: form.name.trim(),
-          description: form.description.trim() ? form.description.trim() : null,
-          html: form.html,
-        },
-      });
+      setPreviewHtml(result.html);
+      setPreviewOpen(true);
+    } catch {
+      // Error surfaced by mutation onError
     }
-
-    const result = await previewTemplate.mutateAsync({
-      id: templateId,
-      body: { variables },
-    });
-    setPreviewHtml(result.html);
-    setPreviewOpen(true);
   }
 
   async function handleDelete() {
     if (!selected) return;
-    await deleteTemplate.mutateAsync(selected.id);
-    setDeleteOpen(false);
-    setSelected(null);
+    try {
+      await deleteTemplate.mutateAsync(selected.id);
+      setDeleteOpen(false);
+      setSelected(null);
+    } catch {
+      // Error surfaced by mutation onError
+    }
   }
 
   useEffect(() => {
@@ -325,7 +316,7 @@ function TemplatesPage() {
                 variant="outline"
                 size="sm"
                 onClick={() => void handlePreview()}
-                disabled={previewTemplate.isPending}
+                disabled={previewAdHoc.isPending}
               >
                 <EyeIcon className="size-3.5" />
                 Preview
@@ -342,17 +333,12 @@ function TemplatesPage() {
               />
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="template-variables">Sample variables (JSON)</Label>
-              <Textarea
-                id="template-variables"
-                className="min-h-28 font-mono text-xs"
-                value={form.variablesJson}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, variablesJson: event.target.value }))
-                }
-              />
-            </div>
+            <JsonObjectField
+              id="template-variables"
+              label="Sample variables (JSON)"
+              value={form.variablesJson}
+              onChange={(variablesJson) => setForm((current) => ({ ...current, variablesJson }))}
+            />
 
             {detectedVariables.length > 0 ? (
               <div className="space-y-2">
@@ -400,30 +386,20 @@ function TemplatesPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete template</DialogTitle>
-            <DialogDescription>
-              Delete <strong>{selected?.name}</strong>? Existing documents keep their reference but
-              new drafts cannot use this template.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setDeleteOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              onClick={() => void handleDelete()}
-              disabled={deleteTemplate.isPending}
-            >
-              Delete template
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDeleteDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title="Delete template"
+        description={
+          <>
+            Delete <strong>{selected?.name}</strong>? Existing documents keep their reference but
+            new drafts cannot use this template.
+          </>
+        }
+        confirmLabel="Delete template"
+        isPending={deleteTemplate.isPending}
+        onConfirm={handleDelete}
+      />
     </section>
   );
 }

@@ -1,10 +1,10 @@
 import type {
+  AdHocPreviewRequest,
   BatchListQuery,
   CreateBatchInput,
   CreateDocumentInput,
   CreateTemplateInput,
   DocumentListQuery,
-  DocumentStatus,
   PreviewRequest,
   TemplateListQuery,
   UpdateDocumentInput,
@@ -13,6 +13,15 @@ import type {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, ApiClientError } from '@/lib/api';
+import { downloadBlob } from '@/lib/download';
+import {
+  hasActiveBatchItems,
+  hasActiveBatches,
+  hasActiveDocumentItems,
+  hasActiveDocuments,
+  hasActiveWork,
+  pollWhileActive,
+} from '@/lib/polling';
 
 export const queryKeys = {
   overview: ['overview'] as const,
@@ -20,20 +29,19 @@ export const queryKeys = {
   template: (id: string) => ['templates', id] as const,
   documents: (params?: DocumentListQuery) => ['documents', params] as const,
   document: (id: string) => ['documents', id] as const,
-  documentStatus: (id: string) => ['documents', id, 'status'] as const,
   batches: (params?: BatchListQuery) => ['batches', params] as const,
   batch: (id: string) => ['batches', id] as const,
 };
 
-const ACTIVE_DOCUMENT_STATUSES: DocumentStatus[] = ['queued', 'processing'];
-
-function isActiveBatchStatus(status: string): boolean {
-  return status === 'queued' || status === 'processing';
-}
-
 function mutationError(error: unknown, fallback: string) {
   const message = error instanceof ApiClientError ? error.message : fallback;
   toast.error(message);
+}
+
+function getOverviewData(queryClient: ReturnType<typeof useQueryClient>) {
+  return queryClient.getQueryData<Awaited<ReturnType<typeof api.getOverview>>>(
+    queryKeys.overview,
+  );
 }
 
 export function useOverview(enabled = true) {
@@ -41,6 +49,7 @@ export function useOverview(enabled = true) {
     queryKey: queryKeys.overview,
     queryFn: () => api.getOverview(),
     enabled,
+    refetchInterval: (query) => pollWhileActive(hasActiveWork(query.state.data)),
   });
 }
 
@@ -51,61 +60,30 @@ export function useTemplates(params?: TemplateListQuery) {
   });
 }
 
-export function useTemplate(templateId: string, enabled = true) {
-  return useQuery({
-    queryKey: queryKeys.template(templateId),
-    queryFn: () => api.getTemplate(templateId),
-    enabled: enabled && Boolean(templateId),
-  });
-}
-
 export function useDocuments(params?: DocumentListQuery) {
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: queryKeys.documents(params),
     queryFn: () => api.listDocuments(params),
     refetchInterval: (query) => {
-      const items = query.state.data?.items;
-      if (items?.some((doc) => ACTIVE_DOCUMENT_STATUSES.includes(doc.status))) {
-        return 2000;
-      }
-      return false;
-    },
-  });
-}
-
-export function useDocument(documentId: string, enabled = true) {
-  return useQuery({
-    queryKey: queryKeys.document(documentId),
-    queryFn: () => api.getDocument(documentId),
-    enabled: enabled && Boolean(documentId),
-  });
-}
-
-export function useDocumentStatus(documentId: string, enabled = true) {
-  return useQuery({
-    queryKey: queryKeys.documentStatus(documentId),
-    queryFn: () => api.getDocumentStatus(documentId),
-    enabled: enabled && Boolean(documentId),
-    refetchInterval: (query) => {
-      const status = query.state.data?.status;
-      if (status && ACTIVE_DOCUMENT_STATUSES.includes(status)) {
-        return 2000;
-      }
-      return false;
+      const overview = getOverviewData(queryClient);
+      const pageActive = hasActiveDocumentItems(query.state.data?.items);
+      const overviewActive = hasActiveDocuments(overview);
+      return pollWhileActive(pageActive || overviewActive);
     },
   });
 }
 
 export function useBatches(params?: BatchListQuery) {
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: queryKeys.batches(params),
     queryFn: () => api.listBatches(params),
     refetchInterval: (query) => {
-      const items = query.state.data?.items;
-      if (items?.some((batch) => isActiveBatchStatus(batch.status))) {
-        return 2000;
-      }
-      return false;
+      const overview = getOverviewData(queryClient);
+      const pageActive = hasActiveBatchItems(query.state.data?.items);
+      const overviewActive = hasActiveBatches(overview);
+      return pollWhileActive(pageActive || overviewActive);
     },
   });
 }
@@ -117,10 +95,7 @@ export function useBatch(batchId: string, enabled = true) {
     enabled: enabled && Boolean(batchId),
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      if (status && isActiveBatchStatus(status)) {
-        return 2000;
-      }
-      return false;
+      return pollWhileActive(status === 'queued' || status === 'processing');
     },
   });
 }
@@ -163,6 +138,13 @@ export function useDeleteTemplate() {
       toast.success('Template deleted');
     },
     onError: (error) => mutationError(error, 'Failed to delete template'),
+  });
+}
+
+export function usePreviewAdHoc() {
+  return useMutation({
+    mutationFn: (body: AdHocPreviewRequest) => api.previewAdHoc(body),
+    onError: (error) => mutationError(error, 'Failed to preview template'),
   });
 }
 
@@ -221,7 +203,6 @@ export function useGenerateDocument() {
     onSuccess: (_, id) => {
       void queryClient.invalidateQueries({ queryKey: ['documents'] });
       void queryClient.invalidateQueries({ queryKey: queryKeys.document(id) });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.documentStatus(id) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.overview });
       toast.success('Generation queued');
     },
@@ -236,7 +217,6 @@ export function useRetryDocument() {
     onSuccess: (_, id) => {
       void queryClient.invalidateQueries({ queryKey: ['documents'] });
       void queryClient.invalidateQueries({ queryKey: queryKeys.document(id) });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.documentStatus(id) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.overview });
       toast.success('Retry queued');
     },
@@ -248,12 +228,7 @@ export function useDownloadDocument() {
   return useMutation({
     mutationFn: async (id: string) => {
       const blob = await api.downloadPdf(id);
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = `certificate-${id.slice(0, 8)}.pdf`;
-      anchor.click();
-      URL.revokeObjectURL(url);
+      downloadBlob(blob, `certificate-${id.slice(0, 8)}.pdf`);
     },
     onSuccess: () => toast.success('Download started'),
     onError: (error) => mutationError(error, 'Failed to download PDF'),

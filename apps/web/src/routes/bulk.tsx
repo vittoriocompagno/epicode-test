@@ -3,17 +3,11 @@ import { DownloadIcon, LayersIcon, UploadIcon } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { QueryState } from '@/components/query-state';
 import { StatusBadge } from '@/components/status-badge';
+import { TemplateSelect } from '@/components/template-select';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import {
   Table,
   TableBody,
@@ -24,9 +18,10 @@ import {
 } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { useBatch, useBatches, useCreateBatch, useTemplates } from '@/hooks/queries';
-import type { CreateBatchInput } from '@certificates/contracts';
+import { downloadBlob } from '@/lib/download';
 import { EXAMPLE_BATCH_ITEMS } from '@/lib/examples';
 import { formatDateTime, formatShortId } from '@/lib/format';
+import { parseBatchInput } from '@/lib/validation';
 
 export const Route = createFileRoute('/bulk')({
   component: BulkPage,
@@ -57,15 +52,10 @@ function BulkPage() {
   }, [itemsJson]);
 
   function downloadExample() {
-    const blob = new Blob([JSON.stringify(EXAMPLE_BATCH_ITEMS, null, 2)], {
-      type: 'application/json',
-    });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = 'batch-items.example.json';
-    anchor.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(
+      new Blob([JSON.stringify(EXAMPLE_BATCH_ITEMS, null, 2)], { type: 'application/json' }),
+      'batch-items.example.json',
+    );
   }
 
   async function handleFileUpload(event: React.ChangeEvent<HTMLInputElement>) {
@@ -76,51 +66,21 @@ function BulkPage() {
     event.target.value = '';
   }
 
-  function parseBatchInput(): CreateBatchInput | null {
-    setFormError(null);
-    if (!templateId) {
-      setFormError('Select a template.');
-      return null;
-    }
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(itemsJson);
-    } catch {
-      setFormError('Items JSON is invalid.');
-      return null;
-    }
-
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-      setFormError('Items must be a non-empty array.');
-      return null;
-    }
-
-    for (const [index, item] of parsed.entries()) {
-      if (!item || typeof item !== 'object' || Array.isArray(item)) {
-        setFormError(`Item ${index + 1} must be an object.`);
-        return null;
-      }
-      const record = item as Record<string, unknown>;
-      if (!record.variables || typeof record.variables !== 'object' || Array.isArray(record.variables)) {
-        setFormError(`Item ${index + 1} must include a variables object.`);
-        return null;
-      }
-    }
-
-    return {
-      templateId,
-      items: parsed as CreateBatchInput['items'],
-      ...(batchEmail.trim() ? { emailTo: batchEmail.trim() } : {}),
-    };
-  }
-
   async function handleCreateBatch() {
-    const payload = parseBatchInput();
-    if (!payload) return;
-    const result = await createBatch.mutateAsync(payload);
-    setActiveBatchId(result.batchId);
-    void batches.refetch();
+    setFormError(null);
+    const result = parseBatchInput(templateId, itemsJson, batchEmail);
+    if (!result.ok) {
+      setFormError(result.error);
+      return;
+    }
+
+    try {
+      const accepted = await createBatch.mutateAsync(result.data);
+      setActiveBatchId(accepted.batchId);
+      void batches.refetch();
+    } catch {
+      // Error surfaced by mutation onError
+    }
   }
 
   return (
@@ -141,21 +101,12 @@ function BulkPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="batch-template">Template</Label>
-              <Select value={templateId} onValueChange={setTemplateId}>
-                <SelectTrigger id="batch-template" className="w-full">
-                  <SelectValue placeholder="Select template" />
-                </SelectTrigger>
-                <SelectContent>
-                  {(templates.data?.items ?? []).map((template) => (
-                    <SelectItem key={template.id} value={template.id}>
-                      {template.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            <TemplateSelect
+              id="batch-template"
+              value={templateId}
+              onValueChange={setTemplateId}
+              templates={templates.data?.items ?? []}
+            />
 
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">

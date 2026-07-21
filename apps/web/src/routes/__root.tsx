@@ -13,9 +13,9 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 });
 
 function RootLayout() {
-  const { hasApiKey } = useApiKey();
+  const { isAuthenticated } = useApiKey();
 
-  if (!hasApiKey) {
+  if (!isAuthenticated) {
     return <ApiKeyScreen />;
   }
 

@@ -8,8 +8,11 @@ import {
   Trash2Icon,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog';
+import { JsonObjectField } from '@/components/json-object-field';
 import { QueryState } from '@/components/query-state';
 import { StatusBadge } from '@/components/status-badge';
+import { TemplateSelect } from '@/components/template-select';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -36,7 +39,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Textarea } from '@/components/ui/textarea';
 import {
   useCreateDocument,
   useDeleteDocument,
@@ -50,6 +52,7 @@ import {
 import type { DocumentResponse, DocumentStatus } from '@certificates/contracts';
 import { EXAMPLE_TEMPLATE_VARIABLES } from '@/lib/examples';
 import { formatDateTime, formatShortId, sanitizeErrorMessage } from '@/lib/format';
+import { parseVariables } from '@/lib/validation';
 
 export const Route = createFileRoute('/documents')({
   component: DocumentsPage,
@@ -97,6 +100,9 @@ function DocumentsPage() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selected, setSelected] = useState<DocumentResponse | null>(null);
+  const [generatingId, setGeneratingId] = useState<string | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [form, setForm] = useState<DocumentFormState>({
     templateId: '',
     variablesJson: JSON.stringify(EXAMPLE_TEMPLATE_VARIABLES, null, 2),
@@ -140,48 +146,78 @@ function DocumentsPage() {
     setDeleteOpen(true);
   }
 
-  function parseVariables(): Record<string, unknown> | null {
-    try {
-      const parsed: unknown = JSON.parse(form.variablesJson);
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        setFormError('Variables must be a JSON object.');
-        return null;
-      }
-      return parsed as Record<string, unknown>;
-    } catch {
-      setFormError('Variables JSON is invalid.');
-      return null;
-    }
-  }
-
   async function handleSave() {
     setFormError(null);
     if (!form.templateId) {
       setFormError('Select a template.');
       return;
     }
-    const variables = parseVariables();
-    if (!variables) return;
-
-    if (selected) {
-      await updateDocument.mutateAsync({
-        id: selected.id,
-        body: { templateId: form.templateId, variables },
-      });
-    } else {
-      await createDocument.mutateAsync({
-        templateId: form.templateId,
-        variables,
-        ...(form.emailTo.trim() ? { emailTo: form.emailTo.trim() } : {}),
-      });
+    const parsed = parseVariables(form.variablesJson);
+    if (!parsed.ok) {
+      setFormError(parsed.error);
+      return;
     }
-    setEditorOpen(false);
+
+    try {
+      if (selected) {
+        await updateDocument.mutateAsync({
+          id: selected.id,
+          body: { templateId: form.templateId, variables: parsed.data },
+        });
+      } else {
+        await createDocument.mutateAsync({
+          templateId: form.templateId,
+          variables: parsed.data,
+          ...(form.emailTo.trim() ? { emailTo: form.emailTo.trim() } : {}),
+        });
+      }
+      setEditorOpen(false);
+    } catch {
+      // Error surfaced by mutation onError
+    }
   }
 
   async function handleDelete() {
     if (!selected) return;
-    await deleteDocument.mutateAsync(selected.id);
-    setDeleteOpen(false);
+    try {
+      await deleteDocument.mutateAsync(selected.id);
+      setDeleteOpen(false);
+    } catch {
+      // Error surfaced by mutation onError
+    }
+  }
+
+  async function handleGenerate(documentId: string) {
+    setGeneratingId(documentId);
+    try {
+      await generateDocument.mutateAsync(documentId);
+    } catch {
+      // Error surfaced by mutation onError
+    } finally {
+      setGeneratingId(null);
+    }
+  }
+
+  async function handleRetry(documentId: string) {
+    setRetryingId(documentId);
+    try {
+      await retryDocument.mutateAsync(documentId);
+    } catch {
+      // Error surfaced by mutation onError
+    } finally {
+      setRetryingId(null);
+    }
+  }
+
+  async function handleDownload(documentId: string) {
+    setDownloadingId(documentId);
+    try {
+      await downloadDocument.mutateAsync(documentId);
+    } catch {
+      // Error surfaced by mutation onError
+    } finally {
+      setDownloadingId(null);
+    }
   }
 
   return (
@@ -294,12 +330,12 @@ function DocumentsPage() {
                           document={document}
                           onEdit={() => openEdit(document)}
                           onDelete={() => openDelete(document)}
-                          onGenerate={() => void generateDocument.mutateAsync(document.id)}
-                          onRetry={() => void retryDocument.mutateAsync(document.id)}
-                          onDownload={() => void downloadDocument.mutateAsync(document.id)}
-                          isGenerating={generateDocument.isPending}
-                          isRetrying={retryDocument.isPending}
-                          isDownloading={downloadDocument.isPending}
+                          onGenerate={() => void handleGenerate(document.id)}
+                          onRetry={() => void handleRetry(document.id)}
+                          onDownload={() => void handleDownload(document.id)}
+                          isGenerating={generatingId === document.id}
+                          isRetrying={retryingId === document.id}
+                          isDownloading={downloadingId === document.id}
                         />
                       </TableCell>
                     </TableRow>
@@ -348,36 +384,20 @@ function DocumentsPage() {
           </DialogHeader>
 
           <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="document-template">Template</Label>
-              <Select
-                value={form.templateId}
-                onValueChange={(value) => setForm((current) => ({ ...current, templateId: value }))}
-              >
-                <SelectTrigger id="document-template" className="w-full">
-                  <SelectValue placeholder="Select template" />
-                </SelectTrigger>
-                <SelectContent>
-                  {(templates.data?.items ?? []).map((template) => (
-                    <SelectItem key={template.id} value={template.id}>
-                      {template.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            <TemplateSelect
+              id="document-template"
+              value={form.templateId}
+              onValueChange={(templateId) => setForm((current) => ({ ...current, templateId }))}
+              templates={templates.data?.items ?? []}
+            />
 
-            <div className="space-y-2">
-              <Label htmlFor="document-variables">Variables (JSON)</Label>
-              <Textarea
-                id="document-variables"
-                className="min-h-40 font-mono text-xs"
-                value={form.variablesJson}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, variablesJson: event.target.value }))
-                }
-              />
-            </div>
+            <JsonObjectField
+              id="document-variables"
+              label="Variables (JSON)"
+              value={form.variablesJson}
+              onChange={(variablesJson) => setForm((current) => ({ ...current, variablesJson }))}
+              minHeight="min-h-40"
+            />
 
             {!selected ? (
               <div className="space-y-2">
@@ -412,29 +432,20 @@ function DocumentsPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete document</DialogTitle>
-            <DialogDescription>
-              Permanently delete draft <code>{selected ? formatShortId(selected.id) : ''}</code>?
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setDeleteOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              onClick={() => void handleDelete()}
-              disabled={deleteDocument.isPending}
-            >
-              Delete document
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDeleteDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title="Delete document"
+        description={
+          <>
+            Permanently delete draft{' '}
+            <code>{selected ? formatShortId(selected.id) : ''}</code>?
+          </>
+        }
+        confirmLabel="Delete document"
+        isPending={deleteDocument.isPending}
+        onConfirm={handleDelete}
+      />
     </section>
   );
 }

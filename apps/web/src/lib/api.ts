@@ -1,4 +1,5 @@
 import type {
+  AdHocPreviewRequest,
   BatchAccepted,
   BatchListQuery,
   BatchStatusResponse,
@@ -48,6 +49,8 @@ export class ApiClientError extends Error {
 type FetchJsonOptions = Omit<RequestInit, 'body'> & {
   body?: unknown;
   params?: Record<string, string | number | undefined>;
+  apiKey?: string;
+  skipUnauthorized?: boolean;
 };
 
 function buildUrl(path: string, params?: Record<string, string | number | undefined>): string {
@@ -62,12 +65,16 @@ function buildUrl(path: string, params?: Record<string, string | number | undefi
   return url.toString();
 }
 
-function buildHeaders(body?: unknown, extra?: HeadersInit): HeadersInit {
+function buildHeaders(
+  body?: unknown,
+  extra?: HeadersInit,
+  apiKeyOverride?: string,
+): HeadersInit {
   const headers: Record<string, string> = {};
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
   }
-  const apiKey = getApiKey();
+  const apiKey = apiKeyOverride ?? getApiKey();
   if (apiKey) {
     headers['X-API-Key'] = apiKey;
   }
@@ -92,9 +99,14 @@ async function parseError(response: Response): Promise<ApiClientError> {
   return new ApiClientError(response.status, 'UNKNOWN', response.statusText || 'Request failed');
 }
 
-async function handleResponse<T>(response: Response): Promise<T> {
+async function handleResponse<T>(
+  response: Response,
+  options?: { skipUnauthorized?: boolean },
+): Promise<T> {
   if (response.status === 401) {
-    notifyUnauthorized();
+    if (!options?.skipUnauthorized) {
+      notifyUnauthorized();
+    }
     throw new ApiClientError(401, 'UNAUTHORIZED', 'Invalid or missing API key');
   }
 
@@ -110,13 +122,13 @@ async function handleResponse<T>(response: Response): Promise<T> {
 }
 
 export async function fetchJson<T>(path: string, options: FetchJsonOptions = {}): Promise<T> {
-  const { body, params, headers, ...rest } = options;
+  const { body, params, headers, apiKey, skipUnauthorized, ...rest } = options;
   const response = await fetch(buildUrl(path, params), {
     ...rest,
-    headers: buildHeaders(body, headers),
+    headers: buildHeaders(body, headers, apiKey),
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  return handleResponse<T>(response);
+  return handleResponse<T>(response, { skipUnauthorized });
 }
 
 export async function fetchBlob(path: string, options: FetchJsonOptions = {}): Promise<Blob> {
@@ -140,7 +152,10 @@ export async function fetchBlob(path: string, options: FetchJsonOptions = {}): P
 }
 
 export const api = {
-  getHealth: () => fetchJson<HealthResponse>('/health'),
+  getHealth: (apiKey?: string) => fetchJson<HealthResponse>('/health', { apiKey }),
+
+  verifyApiKey: (apiKey: string) =>
+    fetchJson<HealthResponse>('/health', { apiKey, skipUnauthorized: true }),
 
   getOverview: () => fetchJson<OverviewResponse>('/api/overview'),
 
@@ -161,6 +176,9 @@ export const api = {
 
   previewTemplate: (templateId: string, body: PreviewRequest) =>
     fetchJson<PreviewResponse>(`/api/templates/${templateId}/preview`, { method: 'POST', body }),
+
+  previewAdHoc: (body: AdHocPreviewRequest) =>
+    fetchJson<PreviewResponse>('/api/templates/preview', { method: 'POST', body }),
 
   listDocuments: (params?: DocumentListQuery) =>
     fetchJson<PaginatedDocuments>('/api/documents', { params }),

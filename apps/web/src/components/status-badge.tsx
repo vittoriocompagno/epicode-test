@@ -1,8 +1,9 @@
-import type { DocumentStatus } from '@certificates/contracts';
+import type { BatchStatusResponse, DocumentStatus } from '@certificates/contracts';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
-type StatusKind = DocumentStatus | 'queued' | 'processing' | 'completed' | 'failed' | 'draft';
+type BatchStatus = BatchStatusResponse['status'];
+type StatusKind = DocumentStatus | BatchStatus;
 
 const statusStyles: Record<StatusKind, string> = {
   draft: 'bg-secondary text-secondary-foreground',
