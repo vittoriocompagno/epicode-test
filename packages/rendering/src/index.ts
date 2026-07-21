@@ -194,12 +194,20 @@ export function renderTemplate(
   }
 }
 
-export async function renderHtmlToPdf(_input: { html: string }): Promise<{ pdf: Buffer }> {
-  void _input;
-  throw new Error('PDF rendering is not available');
+export async function renderHtmlToPdf(
+  html: string,
+  renderer: import('./pdf.js').PdfRenderer,
+  options?: import('./pdf.js').PdfRenderOptions,
+): Promise<Buffer> {
+  return renderer.render(html, options);
 }
 
-export async function closeRenderingResources(): Promise<void> {}
+export {
+  FakePdfRenderer,
+  PlaywrightPdfRenderer,
+  type PdfRenderOptions,
+  type PdfRenderer,
+} from './pdf.js';
 
 function walkAst(node: AstNode, visit: (node: AstNode) => void): void {
   visit(node);
