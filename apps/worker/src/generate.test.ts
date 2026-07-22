@@ -1,8 +1,9 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import pino from 'pino';
+import nodemailer from 'nodemailer';
 import {
   closeDatabaseClient,
   createDatabaseClient,
@@ -43,7 +44,7 @@ describe('certificate generation', () => {
     renderer.failNext = false;
   });
 
-  async function seedQueuedDocument() {
+  async function seedQueuedDocument(emailTo?: string) {
     const [template] = await dbClient.db
       .insert(templates)
       .values({
@@ -59,6 +60,8 @@ describe('certificate generation', () => {
         templateId: template!.id,
         variables: { studentName: 'Ada' },
         status: 'queued',
+        emailTo: emailTo ?? null,
+        emailStatus: emailTo ? 'pending' : 'skipped',
       })
       .returning();
 
@@ -68,14 +71,18 @@ describe('certificate generation', () => {
   it('completes a document and stores a PDF', async () => {
     const document = await seedQueuedDocument();
 
-    await generateCertificateDocument(document.id, {
-      db: dbClient.db,
-      storage,
-      pdfRenderer: renderer,
-      mailer: null,
-      mailFrom: 'test@localhost',
-      logger,
-    }, 1);
+    await generateCertificateDocument(
+      document.id,
+      {
+        db: dbClient.db,
+        storage,
+        pdfRenderer: renderer,
+        mailer: null,
+        mailFrom: 'test@localhost',
+        logger,
+      },
+      1,
+    );
 
     const [updated] = await dbClient.db
       .select()
@@ -118,6 +125,57 @@ describe('certificate generation', () => {
     );
 
     expect(renderer.calls).toHaveLength(1);
+  });
+
+  it('emails the generated PDF and records successful delivery', async () => {
+    const document = await seedQueuedDocument('ada@example.com');
+    const mailer = nodemailer.createTransport({ jsonTransport: true });
+    const sendMail = vi.spyOn(mailer, 'sendMail');
+
+    await generateCertificateDocument(
+      document.id,
+      {
+        db: dbClient.db,
+        storage,
+        pdfRenderer: renderer,
+        mailer,
+        mailFrom: 'certificates@example.com',
+        logger,
+      },
+      1,
+    );
+
+    const [updated] = await dbClient.db
+      .select()
+      .from(documents)
+      .where(eq(documents.id, document.id));
+
+    expect(updated?.status).toBe('completed');
+    expect(updated?.emailStatus).toBe('sent');
+    expect(updated?.emailedAt).toBeInstanceOf(Date);
+    expect(updated?.emailError).toBeNull();
+
+    expect(sendMail).toHaveBeenCalledOnce();
+    const message = sendMail.mock.calls[0]?.[0];
+    expect(message).toMatchObject({
+      from: 'certificates@example.com',
+      to: 'ada@example.com',
+      attachments: [
+        {
+          filename: `certificate-${document.id}.pdf`,
+          contentType: 'application/pdf',
+        },
+      ],
+    });
+    const delivery = await sendMail.mock.results[0]?.value;
+    const serialized = JSON.parse(String(delivery.message)) as {
+      attachments: Array<{ content: string }>;
+    };
+    expect(
+      Buffer.from(serialized.attachments[0]!.content, 'base64').subarray(0, 4).toString('utf8'),
+    ).toBe('%PDF');
+
+    mailer.close();
   });
 
   it('marks the document failed when the renderer throws on the final attempt', async () => {

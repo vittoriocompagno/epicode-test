@@ -18,6 +18,8 @@
     "build": "rm -rf dist && tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:prepare": "tsx --env-file=../../.env src/prepare-test-database.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file=../../.env src/migrate.ts",
     "db:studio": "drizzle-kit studio",
@@ -31,6 +33,7 @@
   "devDependencies": {
     "drizzle-kit": "^0.31.8",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
   }
 }

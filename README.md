@@ -151,7 +151,7 @@ scripts/       load test + demo flows
 | `pnpm build`         | Build all packages and apps                         |
 | `pnpm lint`          | ESLint                                              |
 | `pnpm typecheck`     | TypeScript across the workspace                     |
-| `pnpm test`          | Unit/integration suite                              |
+| `pnpm test`          | Prepare test DB, then run the full test suite       |
 | `pnpm test:load`     | 10,000-item batch enqueue responsiveness            |
 | `pnpm db:generate`   | Generate Drizzle migration                          |
 | `pnpm db:migrate`    | Apply migrations                                    |
@@ -238,13 +238,17 @@ pnpm test
 pnpm test:load   # default LOAD_TEST_JOBS=10000
 ```
 
-### Measured load test (local MacBook Air, Docker Postgres/Redis)
+`pnpm test` idempotently creates and migrates the database configured by
+`TEST_DATABASE_URL`, so the test suite needs no setup beyond the quick-start
+PostgreSQL and Redis containers.
+
+### Measured load test (local MacBook Air, PostgreSQL 17 / Redis 8)
 
 | Metric               | Value         |
 | -------------------- | ------------- |
 | Jobs requested       | 10000         |
-| Bulk `202` latency   | ~774 ms       |
-| Concurrent `/health` | ~1 ms         |
+| Bulk `202` latency   | ~676 ms       |
+| Concurrent `/health` | ~2 ms         |
 | Items / jobs         | 10000 / 10000 |
 | Duplicates / lost    | 0 / 0         |
 

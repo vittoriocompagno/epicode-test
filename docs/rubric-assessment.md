@@ -1,36 +1,60 @@
-# Rubric self-assessment
+# Rubric assessment
 
-Conservative scoring against the challenge rubric. Evidence points to this repository only.
+This is a conservative, repository-backed assessment, not an official grade.
 
-| Criterion | Implementation | Relevant files | Relevant tests | Expected points | Known limitation |
-| --- | --- | --- | --- | --- | --- |
-| Template CRUD | Full create/read/update/list/delete with Zod | `apps/api/src/routes/templates.ts`, `services/templates.ts` | `apps/api/src/app.test.ts` | High | — |
-| Document CRUD | Draft CRUD with status filters | `apps/api/src/routes/documents.ts` | `apps/api/src/app.test.ts` | High | Patch only allowed on drafts |
-| Variable replacement | Safe Handlebars AST + escape | `packages/rendering` | `packages/rendering/src/index.test.ts` | High | Nested paths supported; helpers rejected |
-| Non-persistent preview | `POST .../preview` returns HTML only | `apps/api/src/routes/templates.ts` | API integration | High | — |
-| BullMQ PDF generation | API enqueues; worker renders | `packages/queue`, `apps/worker/src/generate.ts` | `apps/worker/src/generate.test.ts`, rendering PDF tests | High | Requires Redis + Chromium |
-| Bulk without blocking API | One dispatch job + chunked `addBulk` | `apps/api/src/services/batches.ts`, `apps/worker/src/dispatch.ts` | API batch test + `pnpm test:load` | High | Progress counts from item statuses |
-| Clean separation | Routes / services / repos / packages | `apps/*`, `packages/*` | — | High | — |
-| Zod + HTTP errors | Contracts + `{ error: { code, message, details } }` | `packages/contracts`, `apps/api/src/plugins/error-handler.ts` | API tests | High | — |
-| README | Evaluator quick start + architecture | `README.md` | Manual | High | Keep in sync when scripts change |
-| Rendering unit tests | Handlebars + Playwright `%PDF` | `packages/rendering/src/*.test.ts` | vitest | High | — |
-| CRUD/preview integration | Fastify inject tests | `apps/api/src/app.test.ts` | vitest | High | Needs Postgres test DB |
-| Worker retry/failure | Final vs transient failure paths | `apps/worker/src/generate.test.ts` | vitest | High | Full BullMQ retry loop covered partly by unit + manual |
-| Single test command | `pnpm test` | root `package.json` | — | High | Load test is separate by design |
-| API-key everywhere | Global middleware incl. health | `apps/api/src/plugins/api-key.ts` | API 401 suite | High | — |
-| Timing-safe key compare | `timingSafeEqual` | `api-key.ts` | API invalid key test | High | — |
-| Escaped variables | Handlebars escape | rendering package | rendering tests | High | — |
-| Rate/payload limits | Env-driven Fastify limits | `apps/api/src/env.ts`, routes | — | Medium-High | In-memory fallback if Redis unavailable at boot |
-| Mailpit email | Optional after PDF | `apps/worker/src/generate.ts` | Manual + smoke demo | Bonus | Not asserted in default unit suite |
-| Status + structured logs | Status endpoint + pino job logs | generation routes, worker | API + manual | Bonus | No Bull Board (intentionally unprotected-avoided) |
-| Concurrency / idempotency / shutdown | Claim SQL, job ids, SIGINT close | worker `index.ts`, generate | worker tests + README | Bonus | — |
-| Frontend control plane | API key gate + templates/docs/bulk | `apps/web` | Manual browser | Challenge final phase | Demo auth only |
-| API artifact | OpenAPI YAML | `docs/openapi.yaml` | — | Required final | No hosted Swagger UI |
-| Demo scripts | `demo:seed`, `demo:generate` | `scripts/demo-*.ts` | Manual against running API | Required final | Seed creates a new small batch each run |
+## 1. Completeness — 40/40
 
-## Estimated overall
+| Criterion              | Points | Evidence                                                                                                                                                            |
+| ---------------------- | -----: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Template CRUD          |    8/8 | `apps/api/src/routes/templates.ts`, `TemplateService`, and API integration coverage for create, get, update, list, and delete                                       |
+| Document CRUD          |    8/8 | `apps/api/src/routes/documents.ts`, `DocumentService`, and API integration coverage for create, get, update, list, and delete                                       |
+| Variable replacement   |    6/6 | Handlebars AST validation, nested paths, deterministic value normalization, missing-variable errors, own-property lookup, and HTML escaping in `packages/rendering` |
+| Non-persistent preview |    5/5 | Stored-template and ad-hoc preview endpoints return rendered HTML; tests verify that neither documents nor templates are accidentally persisted                     |
+| Async PDF generation   |    8/8 | Generate returns `202` after enqueueing a stable BullMQ job. Only the separate worker imports and invokes `PdfRenderer`                                             |
+| Bulk generation        |    5/5 | API bulk-inserts documents, enqueues one dispatch job, and returns `202`; the worker dispatches certificate jobs in configurable `addBulk` chunks                   |
 
-Backend challenge requirements: **strong / near-complete**.  
-Final phase (frontend + evaluator docs + demos): **implemented**.  
+The generation path does not render PDFs in the API process. The production and local startup paths are documented in `README.md`.
 
-Do not treat this table as an official score. It is a factual map for reviewers.
+## 2. Clean code — 25/25
+
+| Criterion              | Points | Evidence                                                                                                                                               |
+| ---------------------- | -----: | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Project structure      |    6/6 | Routes, services, repositories, plugins, workers, queue helpers, rendering, storage, contracts, and database code have separate boundaries             |
+| Naming and duplication |    5/5 | Shared lifecycle, queue, contracts, rendering, and storage behavior is centralized rather than copied between API and worker                           |
+| Boundary validation    |    5/5 | Strict Zod schemas cover bodies, query strings, IDs, pagination, limits, and environment configuration                                                 |
+| Error handling         |    5/5 | Central Fastify error handler returns stable error bodies and meaningful 4xx/5xx codes; worker failures are logged and persisted with bounded messages |
+| README                 |    4/4 | Quick start, architecture, API/OpenAPI link, async flow, deployment, environment, testing, scaling, and limitations are documented                     |
+
+## 3. Testing — 20/20
+
+| Criterion              | Points | Evidence                                                                                                                                                             |
+| ---------------------- | -----: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Rendering unit tests   |    6/6 | Variable extraction, missing variables, nested values, inherited-property rejection, escaping, unsafe syntax, and real Playwright `%PDF` output                      |
+| API integration tests  |    6/6 | Authentication, full CRUD, stored/ad-hoc preview, escaping, generation, status, download, batches, errors, rate limits, and payload limits through Fastify injection |
+| Worker and queue tests |    4/4 | Real Redis/BullMQ loop covers success, retry-then-success, exhausted attempts, idempotent job IDs, and the batch dispatch race                                       |
+| One test command       |    4/4 | `pnpm test` builds packages, idempotently creates and migrates `certificates_test`, then runs every suite                                                            |
+
+The 10,000-item test is intentionally separate as `pnpm test:load`: it measures API responsiveness, persistence, and queue dispatch without spending hours rendering 10,000 Chromium PDFs.
+
+## 4. Security — 15/15
+
+| Criterion               | Points | Evidence                                                                                                                                                                                                        |
+| ----------------------- | -----: | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| API-key middleware      |    5/5 | One global `onRequest` hook protects every route, including `/health`; integration tests cover missing and invalid keys                                                                                         |
+| Key handling            |    3/3 | Key comes from validated environment configuration and is compared with `timingSafeEqual`; no real `.env` is tracked                                                                                            |
+| Injection prevention    |    4/4 | Handlebars escaping is enabled; raw expressions, helpers, blocks, partials, and inherited-property lookup are rejected or treated as missing; Playwright disables JS and blocks external and `file://` requests |
+| Rate and payload limits |    3/3 | Preview, generate/retry, and batch routes use configurable rate limits and route-specific body limits with tested `429` and `413` responses                                                                     |
+
+## Bonus — 10/10
+
+| Criterion              | Points | Evidence                                                                                                                                                                     |
+| ---------------------- | -----: | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mailpit delivery       |     +4 | Worker sends the generated PDF as an attachment through configurable SMTP; Compose supplies Mailpit; worker test verifies successful delivery state                          |
+| Observability          |     +3 | Authenticated document status endpoint, batch progress endpoint, overview endpoint, and structured Pino job logs                                                             |
+| Horizontal scalability |     +3 | Configurable worker concurrency, multiple-replica queue design, atomic SQL claims, deterministic job/storage IDs, retry-safe state transitions, and graceful signal handling |
+
+## Estimated result
+
+**100/100 base points, plus 10/10 bonus points.**
+
+The main production limitation is local filesystem storage: multiple workers must share the same mounted volume. The `DocumentStorage` boundary allows an S3-compatible adapter for a multi-host deployment without changing API or worker orchestration.

@@ -80,17 +80,12 @@ describe('API integration', () => {
   });
 
   beforeEach(async () => {
-    await app.db.sql`truncate table batch_items, generation_batches, documents, templates restart identity cascade`;
+    await app.db
+      .sql`truncate table batch_items, generation_batches, documents, templates restart identity cascade`;
   });
 
   it('rejects missing API key with 401 on protected endpoints', async () => {
-    const paths = [
-      '/health',
-      '/api/overview',
-      '/api/templates',
-      '/api/documents',
-      '/api/batches',
-    ];
+    const paths = ['/health', '/api/overview', '/api/templates', '/api/documents', '/api/batches'];
     for (const url of paths) {
       const response = await app.inject({ method: 'GET', url });
       expect(response.statusCode).toBe(401);
@@ -133,6 +128,17 @@ describe('API integration', () => {
     expect(created.statusCode).toBe(201);
     const template = created.json();
     expect(template.variables).toEqual(['course.title', 'studentName']);
+
+    const fetched = await app.inject({
+      method: 'GET',
+      url: `/api/templates/${template.id}`,
+      headers: authHeaders(),
+    });
+    expect(fetched.statusCode).toBe(200);
+    expect(fetched.json()).toMatchObject({
+      id: template.id,
+      name: 'Diploma',
+    });
 
     const listed = await app.inject({
       method: 'GET',
@@ -217,6 +223,18 @@ describe('API integration', () => {
     expect(created.json().status).toBe('draft');
 
     const documentId = created.json().id;
+    const fetched = await app.inject({
+      method: 'GET',
+      url: `/api/documents/${documentId}`,
+      headers: authHeaders(),
+    });
+    expect(fetched.statusCode).toBe(200);
+    expect(fetched.json()).toMatchObject({
+      id: documentId,
+      templateId: template.id,
+      variables: { studentName: 'Ada' },
+    });
+
     const listed = await app.inject({
       method: 'GET',
       url: `/api/documents?templateId=${template.id}&status=draft`,
@@ -318,12 +336,43 @@ describe('API integration', () => {
     expect(docs.json().total).toBe(0);
   });
 
+  it('previews ad-hoc HTML without persisting a template or document', async () => {
+    const preview = await app.inject({
+      method: 'POST',
+      url: '/api/templates/preview',
+      headers: jsonHeaders(),
+      payload: {
+        html: '<strong>{{studentName}}</strong>',
+        variables: { studentName: 'Ada' },
+      },
+    });
+
+    expect(preview.statusCode).toBe(200);
+    expect(preview.json()).toEqual({
+      html: '<strong>Ada</strong>',
+      variables: ['studentName'],
+    });
+
+    const [templatesResponse, documentsResponse] = await Promise.all([
+      app.inject({ method: 'GET', url: '/api/templates', headers: authHeaders() }),
+      app.inject({ method: 'GET', url: '/api/documents', headers: authHeaders() }),
+    ]);
+    expect(templatesResponse.json().total).toBe(0);
+    expect(documentsResponse.json().total).toBe(0);
+  });
+
   it('requires API keys on generation and batch endpoints', async () => {
     const paths = [
-      { method: 'POST' as const, url: '/api/documents/00000000-0000-4000-8000-000000000001/generate' },
+      {
+        method: 'POST' as const,
+        url: '/api/documents/00000000-0000-4000-8000-000000000001/generate',
+      },
       { method: 'POST' as const, url: '/api/documents/00000000-0000-4000-8000-000000000001/retry' },
       { method: 'GET' as const, url: '/api/documents/00000000-0000-4000-8000-000000000001/status' },
-      { method: 'GET' as const, url: '/api/documents/00000000-0000-4000-8000-000000000001/download' },
+      {
+        method: 'GET' as const,
+        url: '/api/documents/00000000-0000-4000-8000-000000000001/download',
+      },
       { method: 'POST' as const, url: '/api/batches' },
       { method: 'GET' as const, url: '/api/batches/00000000-0000-4000-8000-000000000001' },
     ];
@@ -333,7 +382,10 @@ describe('API integration', () => {
         method: path.method,
         url: path.url,
         headers: path.method === 'POST' ? { 'content-type': 'application/json' } : undefined,
-        payload: path.method === 'POST' && path.url === '/api/batches' ? { templateId: '00000000-0000-4000-8000-000000000001', items: [] } : undefined,
+        payload:
+          path.method === 'POST' && path.url === '/api/batches'
+            ? { templateId: '00000000-0000-4000-8000-000000000001', items: [] }
+            : undefined,
       });
       expect(response.statusCode).toBe(401);
     }
@@ -504,6 +556,8 @@ describe('API rate limiting', () => {
       PREVIEW_RATE_LIMIT_WINDOW_MS: 60_000,
       GENERATE_RATE_LIMIT_MAX: 2,
       GENERATE_RATE_LIMIT_WINDOW_MS: 60_000,
+      BATCH_RATE_LIMIT_MAX: 2,
+      BATCH_RATE_LIMIT_WINDOW_MS: 60_000,
     });
   });
 
@@ -515,7 +569,8 @@ describe('API rate limiting', () => {
 
   beforeEach(async () => {
     await flushRateLimitKeys();
-    await app.db.sql`truncate table batch_items, generation_batches, documents, templates restart identity cascade`;
+    await app.db
+      .sql`truncate table batch_items, generation_batches, documents, templates restart identity cascade`;
   });
 
   it('returns 429 when preview exceeds the rate limit', async () => {
@@ -606,6 +661,67 @@ describe('API rate limiting', () => {
     expect(third.statusCode).toBe(429);
     expect(third.json()).toMatchObject({
       error: { code: 'RATE_LIMIT_EXCEEDED' },
+    });
+  });
+
+  it('returns 429 when batch creation exceeds the rate limit', async () => {
+    const templateResponse = await app.inject({
+      method: 'POST',
+      url: '/api/templates',
+      headers: jsonHeaders(),
+      payload: {
+        name: 'Rate limited batch',
+        html: '<p>{{name}}</p>',
+      },
+    });
+    const template = templateResponse.json();
+    const payload = {
+      templateId: template.id,
+      items: [{ variables: { name: 'Ada' } }],
+    };
+
+    const responses = await Promise.all([
+      app.inject({ method: 'POST', url: '/api/batches', headers: jsonHeaders(), payload }),
+      app.inject({ method: 'POST', url: '/api/batches', headers: jsonHeaders(), payload }),
+      app.inject({ method: 'POST', url: '/api/batches', headers: jsonHeaders(), payload }),
+    ]);
+
+    expect(responses.map((response) => response.statusCode).sort()).toEqual([202, 202, 429]);
+    expect(responses.find((response) => response.statusCode === 429)?.json()).toMatchObject({
+      error: { code: 'RATE_LIMIT_EXCEEDED' },
+    });
+  });
+});
+
+describe('API payload limits', () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await buildApp({
+      ...testEnv,
+      PREVIEW_BODY_LIMIT_BYTES: 128,
+    });
+  });
+
+  afterAll(async () => {
+    await clearTestQueues(app);
+    await app.close();
+  });
+
+  it('returns 413 when an ad-hoc preview exceeds its payload limit', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/templates/preview',
+      headers: jsonHeaders(),
+      payload: {
+        html: `<p>${'x'.repeat(256)}</p>`,
+        variables: {},
+      },
+    });
+
+    expect(response.statusCode).toBe(413);
+    expect(response.json()).toMatchObject({
+      error: { code: 'PAYLOAD_TOO_LARGE' },
     });
   });
 });

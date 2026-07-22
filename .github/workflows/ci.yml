@@ -77,21 +77,11 @@ jobs:
       - name: Install Playwright Chromium
         run: pnpm --filter @certificates/rendering exec playwright install --with-deps chromium
 
-      - name: Install PostgreSQL client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
-
       - name: Prepare env file
         run: cp .env.example .env
 
-      - name: Create test database
-        run: |
-          until PGPASSWORD=postgres psql -h localhost -U postgres -d certificates -c '\q'; do sleep 1; done
-          PGPASSWORD=postgres createdb -h localhost -U postgres certificates_test || true
-
-      - name: Migrate databases
-        run: |
-          pnpm db:migrate
-          DATABASE_URL="$TEST_DATABASE_URL" pnpm db:migrate
+      - name: Migrate application database
+        run: pnpm db:migrate
 
       - name: Lint
         run: pnpm lint

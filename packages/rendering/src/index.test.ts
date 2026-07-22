@@ -64,6 +64,16 @@ describe('renderTemplate', () => {
     }
   });
 
+  it('treats inherited object properties as missing', () => {
+    const result = renderTemplate('{{constructor}} {{toString}}', {});
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: 'MISSING_VARIABLES',
+      details: { missing: ['constructor', 'toString'] },
+    });
+  });
+
   it('escapes HTML special characters', () => {
     const result = renderTemplate('<p>{{studentName}}</p>', {
       studentName: '<script>alert(1)</script>',

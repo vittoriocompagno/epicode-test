@@ -2,17 +2,13 @@ import Handlebars from 'handlebars';
 
 export type TemplateValidationIssue = {
   code:
-    | 'MALFORMED_TEMPLATE'
-    | 'UNSAFE_EXPRESSION'
-    | 'UNSUPPORTED_EXPRESSION'
-    | 'TOO_MANY_VARIABLES';
+    'MALFORMED_TEMPLATE' | 'UNSAFE_EXPRESSION' | 'UNSUPPORTED_EXPRESSION' | 'TOO_MANY_VARIABLES';
   message: string;
   details?: Record<string, unknown>;
 };
 
 export type TemplateValidationResult =
-  | { ok: true; variables: string[] }
-  | { ok: false; issues: TemplateValidationIssue[] };
+  { ok: true; variables: string[] } | { ok: false; issues: TemplateValidationIssue[] };
 
 export type RenderResult =
   | { ok: true; html: string }
@@ -219,6 +215,9 @@ export function getByPath(source: Record<string, unknown>, path: string): unknow
 
   for (const part of parts) {
     if (current === null || current === undefined || typeof current !== 'object') {
+      return undefined;
+    }
+    if (!Object.prototype.hasOwnProperty.call(current, part)) {
       return undefined;
     }
     current = (current as Record<string, unknown>)[part];
