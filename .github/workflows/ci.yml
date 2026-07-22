@@ -52,7 +52,6 @@ jobs:
       TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/certificates_test
       REDIS_URL: redis://localhost:6379
       API_KEY: ci-test-api-key
-      WEB_ORIGIN: http://localhost:5173
       LOCAL_STORAGE_PATH: ./data/test-documents
       NODE_ENV: test
 
@@ -107,8 +106,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: web
-            image_suffix: web
           - target: api
             image_suffix: api
           - target: worker

@@ -14,7 +14,6 @@ const RATE_LIMIT_NAMESPACE = 'certificates-api-rate-limit-';
 const testEnv: Env = {
   NODE_ENV: 'test',
   API_PORT: 3000,
-  WEB_ORIGIN: 'http://localhost:5173',
   DATABASE_URL:
     process.env.TEST_DATABASE_URL ??
     'postgresql://postgres:postgres@localhost:5432/certificates_test',

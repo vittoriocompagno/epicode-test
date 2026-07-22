@@ -1,5 +1,4 @@
 import Fastify, { type FastifyInstance } from 'fastify';
-import cors from '@fastify/cors';
 import type { Env } from './env.js';
 import apiKeyPlugin from './plugins/api-key.js';
 import databasePlugin from './plugins/database.js';
@@ -22,10 +21,6 @@ export async function buildApp(env: Env): Promise<FastifyInstance> {
   });
 
   await app.register(errorHandlerPlugin);
-  await app.register(cors, {
-    origin: env.WEB_ORIGIN,
-    credentials: true,
-  });
   await app.register(databasePlugin, { databaseUrl: env.DATABASE_URL });
   await app.register(storagePlugin, { rootDir: env.LOCAL_STORAGE_PATH });
   await app.register(queuePlugin, { redisUrl: env.REDIS_URL });

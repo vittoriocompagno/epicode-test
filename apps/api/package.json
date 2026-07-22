@@ -19,7 +19,6 @@
     "@certificates/queue": "workspace:*",
     "@certificates/rendering": "workspace:*",
     "@certificates/storage": "workspace:*",
-    "@fastify/cors": "^11.1.0",
     "@fastify/rate-limit": "^11.1.0",
     "drizzle-orm": "^0.44.7",
     "fastify": "^5.6.2",

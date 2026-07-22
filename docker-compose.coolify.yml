@@ -1,20 +1,10 @@
 services:
-  web:
-    image: ghcr.io/vittoriocompagno/epicode-test/web:latest
-    restart: unless-stopped
-    depends_on:
-      api:
-        condition: service_healthy
-    expose:
-      - '80'
-
   api:
     image: ghcr.io/vittoriocompagno/epicode-test/api:latest
     restart: unless-stopped
     environment:
       NODE_ENV: production
       API_PORT: 3000
-      WEB_ORIGIN: ${WEB_ORIGIN}
       DATABASE_URL: postgresql://certificates:${POSTGRES_PASSWORD}@postgres:5432/certificates
       REDIS_URL: redis://redis:6379
       API_KEY: ${API_KEY}
