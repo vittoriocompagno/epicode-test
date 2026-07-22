@@ -1,7 +1,7 @@
 import postgres from 'postgres';
 import { migrateDatabase } from './migrations.js';
 
-export type TestDatabaseTarget = {
+type TestDatabaseTarget = {
   databaseName: string;
   maintenanceUrl: string;
 };

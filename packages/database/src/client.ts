@@ -25,8 +25,3 @@ export function createDatabaseClient(connectionString: string): DatabaseClient {
 export async function closeDatabaseClient(client: DatabaseClient): Promise<void> {
   await client.sql.end({ timeout: 5 });
 }
-
-export async function pingDatabase(client: DatabaseClient): Promise<boolean> {
-  const result = await client.sql`select 1 as ok`;
-  return result[0]?.ok === 1;
-}

@@ -5,7 +5,7 @@ import type {
   UpdateDocumentInput,
 } from '@certificates/contracts';
 import { documents, type Database } from '@certificates/database';
-import { and, count, desc, eq, inArray } from 'drizzle-orm';
+import { and, count, desc, eq } from 'drizzle-orm';
 import { AppError } from '../errors.js';
 
 function toDocumentResponse(row: typeof documents.$inferSelect): DocumentResponse {
@@ -50,33 +50,6 @@ export class DocumentRepository {
     return toDocumentResponse(row);
   }
 
-  async createMany(
-    values: Array<{
-      templateId: string;
-      variables: Record<string, unknown>;
-      emailTo?: string | null;
-    }>,
-  ): Promise<DocumentResponse[]> {
-    if (values.length === 0) {
-      return [];
-    }
-
-    const rows = await this.db
-      .insert(documents)
-      .values(
-        values.map((value) => ({
-          templateId: value.templateId,
-          variables: value.variables,
-          status: 'draft' as const,
-          emailTo: value.emailTo ?? null,
-          emailStatus: value.emailTo ? ('pending' as const) : ('skipped' as const),
-        })),
-      )
-      .returning();
-
-    return rows.map(toDocumentResponse);
-  }
-
   async findById(id: string): Promise<DocumentResponse | null> {
     const [row] = await this.db.select().from(documents).where(eq(documents.id, id)).limit(1);
     return row ? toDocumentResponse(row) : null;
@@ -118,21 +91,6 @@ export class DocumentRepository {
         updatedAt: new Date(),
       })
       .where(eq(documents.id, id))
-      .returning();
-
-    return row ? toDocumentResponse(row) : null;
-  }
-
-  async markQueued(id: string, fromStatuses: Array<DocumentResponse['status']>): Promise<DocumentResponse | null> {
-    const [row] = await this.db
-      .update(documents)
-      .set({
-        status: 'queued',
-        errorCode: null,
-        errorMessage: null,
-        updatedAt: new Date(),
-      })
-      .where(and(eq(documents.id, id), inArray(documents.status, fromStatuses)))
       .returning();
 
     return row ? toDocumentResponse(row) : null;

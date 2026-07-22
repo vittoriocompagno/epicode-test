@@ -1,12 +1,10 @@
-export { QUEUE_NAMES, type QueueName } from './names.js';
+export { QUEUE_NAMES } from './names.js';
 export {
   defaultJobOptions,
   certificateJobId,
   batchDispatchJobId,
   type CertificateJobName,
   type BatchDispatchJobName,
-  type CertificateJobPayloadMap,
-  type BatchDispatchJobPayloadMap,
 } from './jobs.js';
 export { createRedisConnection, parseRedisUrl } from './redis.js';
 export {

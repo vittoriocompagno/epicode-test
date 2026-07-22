@@ -1,6 +1,6 @@
 import Handlebars from 'handlebars';
 
-export type TemplateValidationIssue = {
+type TemplateValidationIssue = {
   code:
     'MALFORMED_TEMPLATE' | 'UNSAFE_EXPRESSION' | 'UNSUPPORTED_EXPRESSION' | 'TOO_MANY_VARIABLES';
   message: string;
@@ -185,7 +185,6 @@ export function renderTemplate(
 export {
   FakePdfRenderer,
   PlaywrightPdfRenderer,
-  type PdfRenderOptions,
   type PdfRenderer,
 } from './pdf.js';
 
@@ -209,7 +208,7 @@ function isAstNode(value: unknown): value is AstNode {
   return typeof value === 'object' && value !== null && 'type' in value;
 }
 
-export function getByPath(source: Record<string, unknown>, path: string): unknown {
+function getByPath(source: Record<string, unknown>, path: string): unknown {
   const parts = path.split('.');
   let current: unknown = source;
 

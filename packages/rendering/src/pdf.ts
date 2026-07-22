@@ -1,7 +1,7 @@
 import type { Browser, BrowserContext } from 'playwright';
 import { chromium } from 'playwright';
 
-export type PdfRenderOptions = {
+type PdfRenderOptions = {
   format?: 'A4' | 'Letter';
   timeoutMs?: number;
   maxHtmlBytes?: number;

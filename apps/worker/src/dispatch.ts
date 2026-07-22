@@ -13,7 +13,7 @@ import {
 import type { DispatchBatchJob } from '@certificates/contracts';
 import { and, asc, eq } from 'drizzle-orm';
 
-export type BatchDispatchLogger = {
+type BatchDispatchLogger = {
   info: (context: Record<string, unknown>, message: string) => void;
 };
 

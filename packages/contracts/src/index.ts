@@ -1,30 +1,28 @@
 import { z } from 'zod';
 
-export const MAX_TEMPLATE_NAME_LENGTH = 200;
-export const MAX_TEMPLATE_DESCRIPTION_LENGTH = 2_000;
-export const MAX_TEMPLATE_HTML_LENGTH = 100_000;
-export const MAX_TEMPLATE_VARIABLES = 50;
-export const MAX_DOCUMENT_VARIABLES_JSON_BYTES = 32_768;
-export const MAX_PAGE_SIZE = 100;
+const MAX_TEMPLATE_NAME_LENGTH = 200;
+const MAX_TEMPLATE_DESCRIPTION_LENGTH = 2_000;
+const MAX_TEMPLATE_HTML_LENGTH = 100_000;
+const MAX_DOCUMENT_VARIABLES_JSON_BYTES = 32_768;
+const MAX_PAGE_SIZE = 100;
+
+type Paginated<T> = {
+  items: T[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+};
+
+type EmailStatus = 'pending' | 'sent' | 'failed' | 'skipped';
+type BatchStatus = 'queued' | 'processing' | 'completed' | 'failed';
 
 export const UuidSchema = z.string().uuid();
 
-export const PaginationQuerySchema = z.object({
+const PaginationQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(20),
 });
-
-export type PaginationQuery = z.infer<typeof PaginationQuerySchema>;
-
-export const ApiErrorBodySchema = z.object({
-  error: z.object({
-    code: z.string(),
-    message: z.string(),
-    details: z.record(z.unknown()).default({}),
-  }),
-});
-
-export type ApiErrorBody = z.infer<typeof ApiErrorBodySchema>;
 
 export const HealthResponseSchema = z.object({
   status: z.literal('ok'),
@@ -67,17 +65,15 @@ export const UpdateTemplateSchema = z
 
 export type UpdateTemplateInput = z.infer<typeof UpdateTemplateSchema>;
 
-export const TemplateResponseSchema = z.object({
-  id: UuidSchema,
-  name: z.string(),
-  description: z.string().nullable(),
-  html: z.string(),
-  variables: z.array(z.string()),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
-});
-
-export type TemplateResponse = z.infer<typeof TemplateResponseSchema>;
+export type TemplateResponse = {
+  id: string;
+  name: string;
+  description: string | null;
+  html: string;
+  variables: string[];
+  createdAt: string;
+  updatedAt: string;
+};
 
 export const TemplateListQuerySchema = PaginationQuerySchema.extend({
   search: z.string().trim().max(200).optional(),
@@ -85,17 +81,9 @@ export const TemplateListQuerySchema = PaginationQuerySchema.extend({
 
 export type TemplateListQuery = z.infer<typeof TemplateListQuerySchema>;
 
-export const PaginatedTemplatesSchema = z.object({
-  items: z.array(TemplateResponseSchema),
-  page: z.number().int().positive(),
-  pageSize: z.number().int().positive(),
-  total: z.number().int().nonnegative(),
-  totalPages: z.number().int().nonnegative(),
-});
+export type PaginatedTemplates = Paginated<TemplateResponse>;
 
-export type PaginatedTemplates = z.infer<typeof PaginatedTemplatesSchema>;
-
-export const DocumentStatusSchema = z.enum([
+const DocumentStatusSchema = z.enum([
   'draft',
   'queued',
   'processing',
@@ -143,25 +131,23 @@ export const UpdateDocumentSchema = z
 
 export type UpdateDocumentInput = z.infer<typeof UpdateDocumentSchema>;
 
-export const DocumentResponseSchema = z.object({
-  id: UuidSchema,
-  templateId: UuidSchema,
-  variables: z.record(z.unknown()),
-  status: DocumentStatusSchema,
-  outputPath: z.string().nullable(),
-  errorCode: z.string().nullable(),
-  errorMessage: z.string().nullable(),
-  attemptCount: z.number().int().nonnegative(),
-  emailTo: z.string().email().nullable(),
-  emailStatus: z.enum(['pending', 'sent', 'failed', 'skipped']).nullable(),
-  emailError: z.string().nullable(),
-  emailedAt: z.string().datetime().nullable(),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
-  generatedAt: z.string().datetime().nullable(),
-});
-
-export type DocumentResponse = z.infer<typeof DocumentResponseSchema>;
+export type DocumentResponse = {
+  id: string;
+  templateId: string;
+  variables: Record<string, unknown>;
+  status: DocumentStatus;
+  outputPath: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  attemptCount: number;
+  emailTo: string | null;
+  emailStatus: EmailStatus | null;
+  emailError: string | null;
+  emailedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  generatedAt: string | null;
+};
 
 export const DocumentListQuerySchema = PaginationQuerySchema.extend({
   templateId: UuidSchema.optional(),
@@ -170,15 +156,7 @@ export const DocumentListQuerySchema = PaginationQuerySchema.extend({
 
 export type DocumentListQuery = z.infer<typeof DocumentListQuerySchema>;
 
-export const PaginatedDocumentsSchema = z.object({
-  items: z.array(DocumentResponseSchema),
-  page: z.number().int().positive(),
-  pageSize: z.number().int().positive(),
-  total: z.number().int().nonnegative(),
-  totalPages: z.number().int().nonnegative(),
-});
-
-export type PaginatedDocuments = z.infer<typeof PaginatedDocumentsSchema>;
+export type PaginatedDocuments = Paginated<DocumentResponse>;
 
 export const PreviewRequestSchema = z
   .object({
@@ -197,42 +175,31 @@ export const AdHocPreviewRequestSchema = z
 
 export type AdHocPreviewRequest = z.infer<typeof AdHocPreviewRequestSchema>;
 
-export const PreviewResponseSchema = z.object({
-  html: z.string(),
-  variables: z.array(z.string()),
-});
+export type PreviewResponse = {
+  html: string;
+  variables: string[];
+};
 
-export type PreviewResponse = z.infer<typeof PreviewResponseSchema>;
+export type GenerateAccepted = {
+  documentId: string;
+  status: 'queued' | 'processing' | 'completed';
+  jobId: string;
+};
 
-export const GenerateAcceptedSchema = z.object({
-  documentId: UuidSchema,
-  status: z.enum(['queued', 'processing', 'completed']),
-  jobId: z.string(),
-});
+export type DocumentStatusResponse = {
+  documentId: string;
+  status: DocumentStatus;
+  attempts: number;
+  createdAt: string;
+  updatedAt: string;
+  generatedAt: string | null;
+  error: { code: string; message: string } | null;
+  emailStatus: EmailStatus | null;
+};
 
-export type GenerateAccepted = z.infer<typeof GenerateAcceptedSchema>;
+const MAX_BATCH_ITEMS = 10_000;
 
-export const DocumentStatusResponseSchema = z.object({
-  documentId: UuidSchema,
-  status: DocumentStatusSchema,
-  attempts: z.number().int().nonnegative(),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
-  generatedAt: z.string().datetime().nullable(),
-  error: z
-    .object({
-      code: z.string(),
-      message: z.string(),
-    })
-    .nullable(),
-  emailStatus: z.enum(['pending', 'sent', 'failed', 'skipped']).nullable(),
-});
-
-export type DocumentStatusResponse = z.infer<typeof DocumentStatusResponseSchema>;
-
-export const MAX_BATCH_ITEMS = 10_000;
-
-export const CreateBatchItemSchema = z
+const CreateBatchItemSchema = z
   .object({
     variables: DocumentVariablesSchema,
     emailTo: z.string().email().optional(),
@@ -249,58 +216,38 @@ export const CreateBatchSchema = z
 
 export type CreateBatchInput = z.infer<typeof CreateBatchSchema>;
 
-export const BatchAcceptedSchema = z.object({
-  batchId: UuidSchema,
-  status: z.enum(['queued', 'processing', 'completed', 'failed']),
-  total: z.number().int().nonnegative(),
-});
+export type BatchAccepted = {
+  batchId: string;
+  status: BatchStatus;
+  total: number;
+};
 
-export type BatchAccepted = z.infer<typeof BatchAcceptedSchema>;
-
-export const BatchStatusResponseSchema = z.object({
-  id: UuidSchema,
-  status: z.enum(['queued', 'processing', 'completed', 'failed']),
-  total: z.number().int().nonnegative(),
-  queued: z.number().int().nonnegative(),
-  processing: z.number().int().nonnegative(),
-  completed: z.number().int().nonnegative(),
-  failed: z.number().int().nonnegative(),
-  pending: z.number().int().nonnegative(),
-  createdAt: z.string().datetime(),
-  completedAt: z.string().datetime().nullable(),
-});
-
-export type BatchStatusResponse = z.infer<typeof BatchStatusResponseSchema>;
+export type BatchStatusResponse = {
+  id: string;
+  status: BatchStatus;
+  total: number;
+  queued: number;
+  processing: number;
+  completed: number;
+  failed: number;
+  pending: number;
+  createdAt: string;
+  completedAt: string | null;
+};
 
 export const BatchListQuerySchema = PaginationQuerySchema.strict();
 
 export type BatchListQuery = z.infer<typeof BatchListQuerySchema>;
 
-export const PaginatedBatchesSchema = z.object({
-  items: z.array(BatchStatusResponseSchema),
-  page: z.number().int().positive(),
-  pageSize: z.number().int().positive(),
-  total: z.number().int().nonnegative(),
-  totalPages: z.number().int().nonnegative(),
-});
+export type PaginatedBatches = Paginated<BatchStatusResponse>;
 
-export type PaginatedBatches = z.infer<typeof PaginatedBatchesSchema>;
-
-export const OverviewResponseSchema = z.object({
-  api: HealthResponseSchema,
-  templates: z.number().int().nonnegative(),
-  documentsByStatus: z.object({
-    draft: z.number().int().nonnegative(),
-    queued: z.number().int().nonnegative(),
-    processing: z.number().int().nonnegative(),
-    completed: z.number().int().nonnegative(),
-    failed: z.number().int().nonnegative(),
-  }),
-  recentDocuments: z.array(DocumentResponseSchema),
-  recentBatches: z.array(BatchStatusResponseSchema),
-});
-
-export type OverviewResponse = z.infer<typeof OverviewResponseSchema>;
+export type OverviewResponse = {
+  api: HealthResponse;
+  templates: number;
+  documentsByStatus: Record<DocumentStatus, number>;
+  recentDocuments: DocumentResponse[];
+  recentBatches: BatchStatusResponse[];
+};
 
 const CorrelationIdSchema = z.string().min(1).max(128);
 
@@ -317,7 +264,3 @@ export const DispatchBatchJobSchema = z.object({
 });
 
 export type DispatchBatchJob = z.infer<typeof DispatchBatchJobSchema>;
-
-export const JobPayloadSchema = z.union([GenerateCertificateJobSchema, DispatchBatchJobSchema]);
-
-export type JobPayload = z.infer<typeof JobPayloadSchema>;

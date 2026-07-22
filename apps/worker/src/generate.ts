@@ -15,7 +15,7 @@ import { eq } from 'drizzle-orm';
 import type { Transporter } from 'nodemailer';
 import type { Logger } from 'pino';
 
-export type GenerationDeps = {
+type GenerationDeps = {
   db: Database;
   storage: DocumentStorage;
   pdfRenderer: PdfRenderer;

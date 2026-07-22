@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { DocumentStorage, PutDocumentInput, StoredDocument } from './types.js';
 
-export type LocalFilesystemStorageOptions = {
+type LocalFilesystemStorageOptions = {
   rootDir: string;
 };
 

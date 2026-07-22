@@ -1,16 +1,7 @@
-import type { DispatchBatchJob, GenerateCertificateJob } from '@certificates/contracts';
 import { QUEUE_NAMES } from './names.js';
 
 export type CertificateJobName = 'generate-certificate';
 export type BatchDispatchJobName = 'dispatch-batch';
-
-export type CertificateJobPayloadMap = {
-  'generate-certificate': GenerateCertificateJob;
-};
-
-export type BatchDispatchJobPayloadMap = {
-  'dispatch-batch': DispatchBatchJob;
-};
 
 export const defaultJobOptions = {
   attempts: 3,
