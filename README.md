@@ -72,13 +72,15 @@ packages/database        Drizzle schema, migrations, and DB helpers
 packages/queue           Queue names, payloads, and enqueue helpers
 packages/rendering       Template validation and PDF renderer
 packages/storage         Document storage interface and local adapter
-docs/openapi.yaml        OpenAPI contract
+docs/API.md              Human-readable API reference
+docs/openapi.yaml        Machine-readable OpenAPI contract
 scripts                  Demo and load-test flows
 ```
 
-## API contract
+## API documentation
 
-The complete request and response schemas are in [`docs/openapi.yaml`](docs/openapi.yaml).
+- [`docs/API.md`](docs/API.md) contains authentication, endpoints, payloads, responses, errors, limits, and complete request flows.
+- [`docs/openapi.yaml`](docs/openapi.yaml) is the machine-readable OpenAPI 3.0 contract.
 
 Main routes:
 

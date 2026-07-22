@@ -4,8 +4,10 @@ info:
   version: 1.0.0
   description: |
     Authenticated HTTP API for certificate templates, documents, async PDF generation, and bulk batches.
-    All operations require the `X-API-Key` header. There is no public Swagger UI route.
+    All operations require the `X-API-Key` header.
 servers:
+  - url: https://certificates.compagno.cc
+    description: Production
   - url: http://localhost:3000
     description: Local development
 security:
@@ -49,7 +51,8 @@ components:
         status:
           type: string
           enum: [draft, queued, processing, completed, failed]
-        outputPath: { type: string, nullable: true, description: Logical storage key, never an absolute path }
+        outputPath:
+          { type: string, nullable: true, description: Logical storage key, never an absolute path }
         errorCode: { type: string, nullable: true }
         errorMessage: { type: string, nullable: true }
         attemptCount: { type: integer }
