@@ -14,7 +14,6 @@ const logger = {
       console.log(...args);
     }
   },
-  error: console.error.bind(console),
 };
 
 async function main(): Promise<void> {
@@ -29,7 +28,8 @@ async function main(): Promise<void> {
   await queue.obliterate({ force: true });
   await queue.pause();
 
-  await app.db.sql`truncate table batch_items, generation_batches, documents, templates restart identity cascade`;
+  await app.db
+    .sql`truncate table batch_items, generation_batches, documents, templates restart identity cascade`;
 
   const template = await app.inject({
     method: 'POST',
@@ -79,10 +79,7 @@ async function main(): Promise<void> {
       latencyMs: performance.now() - concurrentStarted,
     }));
 
-  const [batchResponse, health] = await Promise.all([
-    batchResponsePromise,
-    healthPromise,
-  ]);
+  const [batchResponse, health] = await Promise.all([batchResponsePromise, healthPromise]);
   const bulkMs = performance.now() - started;
   const concurrentMs = health.latencyMs;
   const healthResponse = health.response;
@@ -100,13 +97,15 @@ async function main(): Promise<void> {
     db: app.db.db,
     certificateQueue: queue,
     chunkSize: Number(process.env.BATCH_DISPATCH_CHUNK_SIZE ?? 500),
-    logger: logger as never,
+    logger,
   });
 
-  const counts = await app.db.sql<{
-    items: number;
-    documents: number;
-  }[]>`
+  const counts = await app.db.sql<
+    {
+      items: number;
+      documents: number;
+    }[]
+  >`
     select
       (select count(*)::int from batch_items where batch_id = ${batchId}) as items,
       (select count(*)::int from documents) as documents
@@ -148,7 +147,12 @@ async function main(): Promise<void> {
   await queue.close();
   await app.close();
 
-  if (batchResponse.statusCode !== 202 || itemCount !== JOBS || jobCount !== JOBS || lostCount > 0) {
+  if (
+    batchResponse.statusCode !== 202 ||
+    itemCount !== JOBS ||
+    jobCount !== JOBS ||
+    lostCount > 0
+  ) {
     process.exitCode = 1;
   }
 }

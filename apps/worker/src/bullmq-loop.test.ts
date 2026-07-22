@@ -56,7 +56,7 @@ describe('BullMQ certificate worker loop', () => {
     });
     await queueEvents.waitUntilReady();
 
-    workerRedis = createRedisConnection(redisUrl, true);
+    workerRedis = createRedisConnection(redisUrl, 'worker');
     worker = new Worker<GenerateCertificateJob, void, CertificateJobName>(
       QUEUE_NAMES.certificateJobs,
       async (job) => {

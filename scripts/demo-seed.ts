@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
- * Idempotent demo seed: upserts a known certificate template, one draft document,
- * and a tiny batch. Safe to re-run; does not wipe unrelated data.
+ * Seeds a reusable template and draft document, then creates a small batch.
+ * Safe to re-run; does not wipe unrelated data.
  */
 import { loadEnv } from '../apps/api/src/env.ts';
 
@@ -49,7 +49,9 @@ async function main(): Promise<void> {
 
   const health = await fetch(`${baseUrl}/health`, { headers: { 'x-api-key': apiKey } });
   if (!health.ok) {
-    throw new Error(`API not reachable at ${baseUrl} (${health.status}). Start pnpm --filter @certificates/api dev first.`);
+    throw new Error(
+      `API not reachable at ${baseUrl} (${health.status}). Start pnpm --filter @certificates/api dev first.`,
+    );
   }
 
   const templates = await fetchJson<{ items: Array<{ id: string; name: string }> }>(
@@ -82,10 +84,11 @@ async function main(): Promise<void> {
     console.log('Updated demo template', templateId);
   }
 
-  const documents = await fetchJson<{ items: Array<{ id: string; status: string; variables: Record<string, unknown> }> }>(
-    `${baseUrl}/api/documents?pageSize=100&templateId=${templateId}`,
-    { headers: { 'x-api-key': apiKey } },
-  );
+  const documents = await fetchJson<{
+    items: Array<{ id: string; status: string; variables: Record<string, unknown> }>;
+  }>(`${baseUrl}/api/documents?pageSize=100&templateId=${templateId}`, {
+    headers: { 'x-api-key': apiKey },
+  });
 
   const existingDraft = documents.items.find(
     (doc) => doc.status === 'draft' && doc.variables?.seed === 'demo',
@@ -157,7 +160,9 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(`${init?.method ?? 'GET'} ${url} failed: ${response.status} ${JSON.stringify(body)}`);
+    throw new Error(
+      `${init?.method ?? 'GET'} ${url} failed: ${response.status} ${JSON.stringify(body)}`,
+    );
   }
   return body as T;
 }

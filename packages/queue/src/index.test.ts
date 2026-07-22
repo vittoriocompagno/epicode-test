@@ -25,6 +25,17 @@ describe('queue configuration', () => {
     });
   });
 
+  it('preserves Redis authentication, database, and TLS settings', () => {
+    expect(parseRedisUrl('rediss://queue-user:p%40ss@[::1]:6380/15')).toEqual({
+      host: '::1',
+      port: 6380,
+      username: 'queue-user',
+      password: 'p@ss',
+      db: 15,
+      tls: {},
+    });
+  });
+
   it('configures retry defaults and stable job ids', () => {
     expect(defaultJobOptions.attempts).toBeGreaterThan(0);
     expect(defaultJobOptions.backoff.type).toBe('exponential');

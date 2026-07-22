@@ -1,10 +1,7 @@
 import { Worker } from 'bullmq';
 import nodemailer from 'nodemailer';
 import pino from 'pino';
-import {
-  closeDatabaseClient,
-  createDatabaseClient,
-} from '@certificates/database';
+import { closeDatabaseClient, createDatabaseClient } from '@certificates/database';
 import {
   QUEUE_NAMES,
   createRedisConnection,
@@ -28,7 +25,7 @@ async function bootstrap(): Promise<void> {
   const database = createDatabaseClient(env.DATABASE_URL);
   const storage = new LocalFilesystemStorage({ rootDir: env.LOCAL_STORAGE_PATH });
   const pdfRenderer = new PlaywrightPdfRenderer({ timeoutMs: env.PDF_TIMEOUT_MS });
-  const redis = createRedisConnection(env.REDIS_URL, true);
+  const redis = createRedisConnection(env.REDIS_URL, 'worker');
   const certificateQueue = createCertificateQueue(env.REDIS_URL);
   const maxAttempts = defaultJobOptions.attempts;
 

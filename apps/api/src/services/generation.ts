@@ -29,11 +29,11 @@ export class GenerationService {
   }
 
   async generate(documentId: string): Promise<GenerateAccepted> {
-    return this.enqueue(documentId, ['draft', 'failed'], 'DOCUMENT_NOT_GENERATABLE');
+    return this.enqueue(documentId, 'generate');
   }
 
   async retry(documentId: string): Promise<GenerateAccepted> {
-    return this.enqueue(documentId, ['failed'], 'DOCUMENT_NOT_RETRYABLE');
+    return this.enqueue(documentId, 'retry');
   }
 
   async status(documentId: string): Promise<DocumentStatusResponse> {
@@ -75,9 +75,11 @@ export class GenerationService {
 
   private async enqueue(
     documentId: string,
-    allowedFrom: DocumentStatus[],
-    notAllowedCode: string,
+    intent: 'generate' | 'retry',
   ): Promise<GenerateAccepted> {
+    const allowedFrom: DocumentStatus[] = intent === 'retry' ? ['failed'] : ['draft', 'failed'];
+    const notAllowedCode =
+      intent === 'retry' ? 'DOCUMENT_NOT_RETRYABLE' : 'DOCUMENT_NOT_GENERATABLE';
     const document = await this.requireDocument(documentId);
     const template = await this.templates.findById(document.templateId);
     if (!template) {
@@ -86,8 +88,12 @@ export class GenerationService {
 
     this.assertVariablesPresent(template.variables, document.variables);
 
-    if (document.status === 'completed' || document.status === 'queued' || document.status === 'processing') {
-      if (allowedFrom.length === 1 && allowedFrom[0] === 'failed') {
+    if (
+      document.status === 'completed' ||
+      document.status === 'queued' ||
+      document.status === 'processing'
+    ) {
+      if (intent === 'retry') {
         throw new AppError(409, notAllowedCode, 'Only failed documents can be retried', {
           status: document.status,
         });
@@ -104,12 +110,14 @@ export class GenerationService {
     const queued = await markDocumentQueued(this.db, document.id, allowedFrom);
     if (!queued) {
       const latest = await this.requireDocument(documentId);
-      if (allowedFrom.length === 1 && allowedFrom[0] === 'failed') {
+      if (intent === 'retry') {
         throw new AppError(409, notAllowedCode, 'Document is no longer failed');
       }
       return this.snapshot(
         latest.id,
-        latest.status === 'completed' || latest.status === 'processing' || latest.status === 'queued'
+        latest.status === 'completed' ||
+          latest.status === 'processing' ||
+          latest.status === 'queued'
           ? latest.status
           : 'queued',
       );
@@ -154,10 +162,7 @@ export class GenerationService {
     return document;
   }
 
-  private assertVariablesPresent(
-    required: string[],
-    variables: Record<string, unknown>,
-  ): void {
+  private assertVariablesPresent(required: string[], variables: Record<string, unknown>): void {
     const missing = findMissingVariables(required, variables);
     if (missing.length > 0) {
       throw new AppError(422, 'MISSING_VARIABLES', 'Document is missing required variables', {

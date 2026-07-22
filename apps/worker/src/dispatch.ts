@@ -11,7 +11,10 @@ import {
   type CertificateQueue,
 } from '@certificates/queue';
 import { and, asc, eq } from 'drizzle-orm';
-import type { Logger } from 'pino';
+
+export type BatchDispatchLogger = {
+  info: (context: Record<string, unknown>, message: string) => void;
+};
 
 export async function dispatchBatch(
   batchId: string,
@@ -19,7 +22,7 @@ export async function dispatchBatch(
     db: Database;
     certificateQueue: CertificateQueue;
     chunkSize: number;
-    logger: Logger;
+    logger: BatchDispatchLogger;
   },
 ): Promise<void> {
   deps.logger.info({ batchId }, 'batch dispatch started');
@@ -55,10 +58,7 @@ export async function dispatchBatch(
     await markDocumentsQueued(deps.db, documentIds, ['draft']);
 
     dispatched += pending.length;
-    deps.logger.info(
-      { batchId, chunkSize: pending.length, dispatched },
-      'batch chunk dispatched',
-    );
+    deps.logger.info({ batchId, chunkSize: pending.length, dispatched }, 'batch chunk dispatched');
   }
 
   await persistDerivedBatchStatus(deps.db, batchId);
