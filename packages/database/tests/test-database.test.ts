@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveTestDatabaseTarget } from './test-database.js';
+import { resolveTestDatabaseTarget } from '../src/test-database.js';
 
 describe('resolveTestDatabaseTarget', () => {
   it('uses postgres as the maintenance database', () => {

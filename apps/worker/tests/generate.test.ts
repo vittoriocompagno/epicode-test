@@ -14,7 +14,7 @@ import {
 import { FakePdfRenderer } from '@certificates/rendering';
 import { LocalFilesystemStorage } from '@certificates/storage';
 import { eq } from 'drizzle-orm';
-import { generateCertificateDocument } from './generate.js';
+import { generateCertificateDocument } from '../src/generate.js';
 
 const databaseUrl =
   process.env.TEST_DATABASE_URL ??

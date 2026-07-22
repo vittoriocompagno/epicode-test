@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractTemplateVariables, renderTemplate, validateTemplate } from './index.js';
+import { extractTemplateVariables, renderTemplate, validateTemplate } from '../src/index.js';
 
 describe('extractTemplateVariables', () => {
   it('extracts simple placeholders', () => {

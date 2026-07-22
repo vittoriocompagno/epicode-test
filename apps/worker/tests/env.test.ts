@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { QUEUE_NAMES } from '@certificates/queue';
-import { loadEnv } from './env.js';
+import { loadEnv } from '../src/env.js';
 
 describe('worker foundation', () => {
   it('loads concurrency and chunk size from the environment', () => {

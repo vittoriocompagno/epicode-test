@@ -8,12 +8,15 @@ import pino from 'pino';
 import {
   closeDatabaseClient,
   createDatabaseClient,
+  batchItems,
   documents,
+  generationBatches,
   templates,
   type DatabaseClient,
 } from '@certificates/database';
 import {
   QUEUE_NAMES,
+  certificateJobId,
   createCertificateQueue,
   createRedisConnection,
   enqueueCertificateGeneration,
@@ -25,7 +28,8 @@ import type { GenerateCertificateJob } from '@certificates/contracts';
 import { FakePdfRenderer } from '@certificates/rendering';
 import { LocalFilesystemStorage } from '@certificates/storage';
 import { eq } from 'drizzle-orm';
-import { generateCertificateDocument } from './generate.js';
+import { generateCertificateDocument } from '../src/generate.js';
+import { dispatchBatch } from '../src/dispatch.js';
 
 const databaseUrl =
   process.env.TEST_DATABASE_URL ??
@@ -124,10 +128,14 @@ describe('BullMQ certificate worker loop', () => {
 
   it('processes an enqueued job through BullMQ to completion', async () => {
     const document = await seedQueuedDocument();
-    const jobId = await enqueueCertificateGeneration(queue, document.id, {
-      attempts: 1,
-      backoff: { type: 'fixed', delay: 50 },
-    });
+    const jobId = await enqueueCertificateGeneration(
+      queue,
+      { documentId: document.id, correlationId: 'req-complete' },
+      {
+        attempts: 1,
+        backoff: { type: 'fixed', delay: 50 },
+      },
+    );
 
     const job = await queue.getJob(jobId);
     await job!.waitUntilFinished(queueEvents, 15_000);
@@ -142,14 +150,54 @@ describe('BullMQ certificate worker loop', () => {
     expect(renderer.calls).toHaveLength(1);
   }, 20_000);
 
+  it('propagates the batch correlation ID to certificate jobs', async () => {
+    const [template] = await dbClient.db
+      .insert(templates)
+      .values({ name: 'Batch', html: '<p>{{name}}</p>', variables: ['name'] })
+      .returning();
+    const [batch] = await dbClient.db
+      .insert(generationBatches)
+      .values({ templateId: template!.id, totalCount: 1 })
+      .returning();
+    const [document] = await dbClient.db
+      .insert(documents)
+      .values({
+        templateId: template!.id,
+        variables: { name: 'Ada' },
+        status: 'draft',
+      })
+      .returning();
+    await dbClient.db.insert(batchItems).values({
+      batchId: batch!.id,
+      documentId: document!.id,
+    });
+
+    await dispatchBatch(
+      { batchId: batch!.id, correlationId: 'req-batch-42' },
+      {
+        db: dbClient.db,
+        certificateQueue: queue,
+        chunkSize: 10,
+        logger,
+      },
+    );
+
+    const job = await queue.getJob(certificateJobId(document!.id));
+    expect(job?.data.correlationId).toBe('req-batch-42');
+  });
+
   it('retries a failed attempt then completes on the next BullMQ attempt', async () => {
     const document = await seedQueuedDocument();
     renderer.failNext = true;
 
-    const jobId = await enqueueCertificateGeneration(queue, document.id, {
-      attempts: 2,
-      backoff: { type: 'fixed', delay: 50 },
-    });
+    const jobId = await enqueueCertificateGeneration(
+      queue,
+      { documentId: document.id, correlationId: 'req-retry' },
+      {
+        attempts: 2,
+        backoff: { type: 'fixed', delay: 50 },
+      },
+    );
 
     const job = await queue.getJob(jobId);
     await job!.waitUntilFinished(queueEvents, 15_000);
@@ -167,10 +215,14 @@ describe('BullMQ certificate worker loop', () => {
     const document = await seedQueuedDocument();
     renderer.failAlways = true;
 
-    const jobId = await enqueueCertificateGeneration(queue, document.id, {
-      attempts: 2,
-      backoff: { type: 'fixed', delay: 50 },
-    });
+    const jobId = await enqueueCertificateGeneration(
+      queue,
+      { documentId: document.id, correlationId: 'req-failure' },
+      {
+        attempts: 2,
+        backoff: { type: 'fixed', delay: 50 },
+      },
+    );
 
     const job = await queue.getJob(jobId);
     await expect(job!.waitUntilFinished(queueEvents, 15_000)).rejects.toThrow(

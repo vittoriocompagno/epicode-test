@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { FakePdfRenderer, PlaywrightPdfRenderer } from './pdf.js';
+import { FakePdfRenderer, PlaywrightPdfRenderer } from '../src/pdf.js';
 
 describe('FakePdfRenderer', () => {
   it('returns a buffer starting with %PDF', async () => {

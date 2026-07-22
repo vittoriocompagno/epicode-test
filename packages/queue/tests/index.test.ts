@@ -8,7 +8,7 @@ import {
   enqueueCertificateGeneration,
   parseRedisUrl,
   type CertificateQueue,
-} from './index.js';
+} from '../src/index.js';
 
 const redisUrl = process.env.REDIS_URL ?? 'redis://localhost:6379';
 
@@ -60,13 +60,14 @@ describe('certificate queue against Redis', () => {
 
   it('enqueues a generate job with stable id and payload', async () => {
     const documentId = randomUUID();
-    const jobId = await enqueueCertificateGeneration(queue, documentId);
+    const correlationId = 'req-42';
+    const jobId = await enqueueCertificateGeneration(queue, { documentId, correlationId });
     expect(jobId).toBe(certificateJobId(documentId));
 
     const job = await queue.getJob(jobId);
     expect(job).toBeTruthy();
     expect(job?.name).toBe('generate-certificate');
-    expect(job?.data).toEqual({ documentId });
+    expect(job?.data).toEqual({ documentId, correlationId });
 
     const state = await job!.getState();
     expect(state).toBe('waiting');
@@ -74,8 +75,14 @@ describe('certificate queue against Redis', () => {
 
   it('reuses the same job id instead of creating a duplicate active job', async () => {
     const documentId = randomUUID();
-    const firstId = await enqueueCertificateGeneration(queue, documentId);
-    const secondId = await enqueueCertificateGeneration(queue, documentId);
+    const firstId = await enqueueCertificateGeneration(queue, {
+      documentId,
+      correlationId: 'req-first',
+    });
+    const secondId = await enqueueCertificateGeneration(queue, {
+      documentId,
+      correlationId: 'req-second',
+    });
 
     expect(secondId).toBe(firstId);
     expect(await queue.getJobCounts('waiting', 'delayed', 'active')).toMatchObject({

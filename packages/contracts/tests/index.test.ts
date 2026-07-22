@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   CreateTemplateSchema,
+  DispatchBatchJobSchema,
+  GenerateCertificateJobSchema,
   HealthResponseSchema,
   PreviewRequestSchema,
-} from './index.js';
+} from '../src/index.js';
 
 describe('HealthResponseSchema', () => {
   it('accepts a valid health payload', () => {
@@ -22,6 +24,30 @@ describe('HealthResponseSchema', () => {
         status: 'down',
         service: 'api',
         timestamp: new Date().toISOString(),
+      }),
+    ).toThrow();
+  });
+});
+
+describe('queue job schemas', () => {
+  it('preserves correlation IDs across generation and batch jobs', () => {
+    const correlationId = 'req-42';
+
+    expect(
+      GenerateCertificateJobSchema.parse({
+        documentId: '00000000-0000-4000-8000-000000000001',
+        correlationId,
+      }),
+    ).toMatchObject({ correlationId });
+    expect(
+      DispatchBatchJobSchema.parse({
+        batchId: '00000000-0000-4000-8000-000000000002',
+        correlationId,
+      }),
+    ).toMatchObject({ correlationId });
+    expect(() =>
+      GenerateCertificateJobSchema.parse({
+        documentId: '00000000-0000-4000-8000-000000000001',
       }),
     ).toThrow();
   });

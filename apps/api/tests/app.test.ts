@@ -2,10 +2,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { Redis } from 'ioredis';
 import { documents } from '@certificates/database';
+import { batchDispatchJobId } from '@certificates/queue';
 import { documentPdfStorageKey } from '@certificates/storage';
 import { eq } from 'drizzle-orm';
-import { buildApp } from './app.js';
-import type { Env } from './env.js';
+import { buildApp } from '../src/app.js';
+import type { Env } from '../src/env.js';
 
 const API_KEY = 'test-api-key';
 const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379/15';
@@ -423,6 +424,8 @@ describe('API integration', () => {
       documentId: document.id,
       status: 'queued',
     });
+    const generationJob = await app.certificateQueue.getJob(generated.json().jobId);
+    expect(generationJob?.data.correlationId).toEqual(expect.any(String));
 
     const status = await app.inject({
       method: 'GET',
@@ -513,6 +516,10 @@ describe('API integration', () => {
       status: 'queued',
       total: 2,
     });
+    const dispatchJob = await app.batchDispatchQueue.getJob(
+      batchDispatchJobId(batchResponse.json().batchId),
+    );
+    expect(dispatchJob?.data.correlationId).toEqual(expect.any(String));
 
     const progress = await app.inject({
       method: 'GET',
