@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { Env } from './env.js';
+import { createApiLoggerOptions } from './logging.js';
 import apiKeyPlugin from './plugins/api-key.js';
 import databasePlugin from './plugins/database.js';
 import errorHandlerPlugin from './plugins/error-handler.js';
@@ -14,9 +15,7 @@ import templateRoutes from './routes/templates.js';
 
 export async function buildApp(env: Env): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: {
-      level: env.NODE_ENV === 'test' ? 'error' : env.NODE_ENV === 'production' ? 'info' : 'debug',
-    },
+    logger: createApiLoggerOptions(env.NODE_ENV),
     bodyLimit: env.BODY_LIMIT_BYTES,
   });
 

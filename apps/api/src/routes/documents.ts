@@ -55,7 +55,11 @@ const documentRoutes: FastifyPluginAsync<{ env: Env }> = async (app, opts) => {
     { config: { rateLimit: generateRateLimit } },
     async (request, reply) => {
       const documentId = parseUuidParam(request, 'documentId');
-      const accepted = await generation.generate(documentId);
+      const accepted = await generation.generate(documentId, request.id);
+      request.log.info(
+        { correlationId: request.id, documentId, jobId: accepted.jobId },
+        'generation accepted',
+      );
       return reply.code(202).send(accepted);
     },
   );
@@ -65,7 +69,11 @@ const documentRoutes: FastifyPluginAsync<{ env: Env }> = async (app, opts) => {
     { config: { rateLimit: generateRateLimit } },
     async (request, reply) => {
       const documentId = parseUuidParam(request, 'documentId');
-      const accepted = await generation.retry(documentId);
+      const accepted = await generation.retry(documentId, request.id);
+      request.log.info(
+        { correlationId: request.id, documentId, jobId: accepted.jobId },
+        'generation retry accepted',
+      );
       return reply.code(202).send(accepted);
     },
   );

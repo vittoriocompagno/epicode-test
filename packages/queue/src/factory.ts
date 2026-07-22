@@ -37,13 +37,13 @@ export function createBatchDispatchQueue(
 
 export async function enqueueCertificateGeneration(
   queue: CertificateQueue,
-  documentId: string,
+  payload: GenerateCertificateJob,
   jobOptions: JobsOptions = {},
 ): Promise<string> {
-  const jobId = certificateJobId(documentId);
+  const jobId = certificateJobId(payload.documentId);
   const job = await queue.add(
     'generate-certificate',
-    { documentId },
+    payload,
     {
       jobId,
       ...jobOptions,
@@ -54,13 +54,13 @@ export async function enqueueCertificateGeneration(
 
 export async function enqueueBatchDispatch(
   queue: BatchDispatchQueue,
-  batchId: string,
+  payload: DispatchBatchJob,
   jobOptions: JobsOptions = {},
 ): Promise<string> {
-  const jobId = batchDispatchJobId(batchId);
+  const jobId = batchDispatchJobId(payload.batchId);
   const job = await queue.add(
     'dispatch-batch',
-    { batchId },
+    payload,
     {
       jobId,
       ...jobOptions,

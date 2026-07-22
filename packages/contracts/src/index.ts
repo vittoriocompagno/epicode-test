@@ -302,14 +302,18 @@ export const OverviewResponseSchema = z.object({
 
 export type OverviewResponse = z.infer<typeof OverviewResponseSchema>;
 
+const CorrelationIdSchema = z.string().min(1).max(128);
+
 export const GenerateCertificateJobSchema = z.object({
   documentId: UuidSchema,
+  correlationId: CorrelationIdSchema,
 });
 
 export type GenerateCertificateJob = z.infer<typeof GenerateCertificateJobSchema>;
 
 export const DispatchBatchJobSchema = z.object({
   batchId: UuidSchema,
+  correlationId: CorrelationIdSchema,
 });
 
 export type DispatchBatchJob = z.infer<typeof DispatchBatchJobSchema>;

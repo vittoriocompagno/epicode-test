@@ -28,12 +28,12 @@ export class GenerationService {
     this.templates = new TemplateRepository(db);
   }
 
-  async generate(documentId: string): Promise<GenerateAccepted> {
-    return this.enqueue(documentId, 'generate');
+  async generate(documentId: string, correlationId: string): Promise<GenerateAccepted> {
+    return this.enqueue(documentId, 'generate', correlationId);
   }
 
-  async retry(documentId: string): Promise<GenerateAccepted> {
-    return this.enqueue(documentId, 'retry');
+  async retry(documentId: string, correlationId: string): Promise<GenerateAccepted> {
+    return this.enqueue(documentId, 'retry', correlationId);
   }
 
   async status(documentId: string): Promise<DocumentStatusResponse> {
@@ -76,6 +76,7 @@ export class GenerationService {
   private async enqueue(
     documentId: string,
     intent: 'generate' | 'retry',
+    correlationId: string,
   ): Promise<GenerateAccepted> {
     const allowedFrom: DocumentStatus[] = intent === 'retry' ? ['failed'] : ['draft', 'failed'];
     const notAllowedCode =
@@ -124,7 +125,10 @@ export class GenerationService {
     }
 
     await this.removeFinishedCertificateJob(document.id);
-    const jobId = await enqueueCertificateGeneration(this.certificateQueue, document.id);
+    const jobId = await enqueueCertificateGeneration(this.certificateQueue, {
+      documentId: document.id,
+      correlationId,
+    });
     return {
       documentId: queued.id,
       status: 'queued',

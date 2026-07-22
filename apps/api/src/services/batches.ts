@@ -33,7 +33,7 @@ export class BatchService {
     this.templates = new TemplateRepository(db);
   }
 
-  async create(input: CreateBatchInput): Promise<BatchAccepted> {
+  async create(input: CreateBatchInput, correlationId: string): Promise<BatchAccepted> {
     const template = await this.templates.findById(input.templateId);
     if (!template) {
       throw new AppError(404, 'TEMPLATE_NOT_FOUND', 'Template not found');
@@ -100,7 +100,7 @@ export class BatchService {
     });
 
     try {
-      await enqueueBatchDispatch(this.batchDispatchQueue, batchId);
+      await enqueueBatchDispatch(this.batchDispatchQueue, { batchId, correlationId });
     } catch (error) {
       throw new AppError(
         503,

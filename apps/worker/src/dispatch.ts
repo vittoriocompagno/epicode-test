@@ -10,6 +10,7 @@ import {
   createCertificateQueue,
   type CertificateQueue,
 } from '@certificates/queue';
+import type { DispatchBatchJob } from '@certificates/contracts';
 import { and, asc, eq } from 'drizzle-orm';
 
 export type BatchDispatchLogger = {
@@ -17,7 +18,7 @@ export type BatchDispatchLogger = {
 };
 
 export async function dispatchBatch(
-  batchId: string,
+  job: DispatchBatchJob,
   deps: {
     db: Database;
     certificateQueue: CertificateQueue;
@@ -25,6 +26,7 @@ export async function dispatchBatch(
     logger: BatchDispatchLogger;
   },
 ): Promise<void> {
+  const { batchId, correlationId } = job;
   deps.logger.info({ batchId }, 'batch dispatch started');
 
   let dispatched = 0;
@@ -46,7 +48,7 @@ export async function dispatchBatch(
 
     const jobs = pending.map((item) => ({
       name: 'generate-certificate' as const,
-      data: { documentId: item.documentId },
+      data: { documentId: item.documentId, correlationId },
       opts: {
         jobId: certificateJobId(item.documentId),
       },

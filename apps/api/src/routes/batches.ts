@@ -25,7 +25,11 @@ const batchRoutes: FastifyPluginAsync<{ env: Env }> = async (app, opts) => {
     },
     async (request, reply) => {
       const body = parseWithSchema(CreateBatchSchema, request.body);
-      const accepted = await batches.create(body);
+      const accepted = await batches.create(body, request.id);
+      request.log.info(
+        { correlationId: request.id, batchId: accepted.batchId, total: accepted.total },
+        'batch accepted',
+      );
       return reply.code(202).send(accepted);
     },
   );

@@ -93,12 +93,15 @@ async function main(): Promise<void> {
 
   const batchId = batchResponse.json().batchId as string;
 
-  await dispatchBatch(batchId, {
-    db: app.db.db,
-    certificateQueue: queue,
-    chunkSize: Number(process.env.BATCH_DISPATCH_CHUNK_SIZE ?? 500),
-    logger,
-  });
+  await dispatchBatch(
+    { batchId, correlationId: 'load-test' },
+    {
+      db: app.db.db,
+      certificateQueue: queue,
+      chunkSize: Number(process.env.BATCH_DISPATCH_CHUNK_SIZE ?? 500),
+      logger,
+    },
+  );
 
   const counts = await app.db.sql<
     {
